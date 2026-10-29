@@ -1,0 +1,22 @@
+package = "dbml-ls"
+version = "0.1.0"
+lua = ">=5.4"
+
+[description]
+summary = "DBML Language Server in Lua"
+maintainer = "Fillipe Goulart"
+labels = [ "language server", "dbml" ]
+license = "MIT"
+
+# [source]
+# When publishing, configure the source URL here
+
+[dependencies]
+# Add your dependencies here
+# `busted = ">=2.0"`
+
+[run]
+args = [ "src/main.lua" ]
+
+[build]
+type = "builtin"
