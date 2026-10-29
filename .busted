@@ -1,0 +1,4 @@
+return {
+  lpath = "./src/?.lua;./src/?/init.lua;./spec/?.lua",
+  pattern = "_spec%.lua$",
+}

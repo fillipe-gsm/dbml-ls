@@ -12,8 +12,13 @@ license = "MIT"
 # When publishing, configure the source URL here
 
 [dependencies]
-# Add your dependencies here
-# `busted = ">=2.0"`
+# Runtime dependencies are vendored under src/vendor.
+
+[test_dependencies]
+busted = ">=2.0"
+
+[test]
+type = "busted"
 
 [run]
 args = [ "src/main.lua" ]
