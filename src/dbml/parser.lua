@@ -6,6 +6,8 @@
 
 local M = {}
 
+local Ref = require("dbml.ref")
+
 local concat = table.concat
 
 local Parser = {}
@@ -121,17 +123,136 @@ function Parser:parse_qualified_name()
   }
 end
 
-function Parser:skip_line()
-  local line = self:peek() and self:peek().line
-  while self:peek() and self:peek().type ~= "eof" and self:peek().line == line do
+--- Skip a balanced `{ ... }` block.  Strings and backtick expressions are
+--- single tokens, so brace counting is safe.
+function Parser:skip_balanced_block()
+  local open = self:accept_punct("{")
+  if not open then
+    return
+  end
+  local depth = 1
+  while depth > 0 and self:peek() and self:peek().type ~= "eof" do
+    local token = self:next()
+    if token.type == "punct" and token.value == "{" then
+      depth = depth + 1
+    elseif token.type == "punct" and token.value == "}" then
+      depth = depth - 1
+    end
+  end
+  if depth > 0 then
+    self:error(self:peek(), "unclosed block")
+  end
+end
+
+function Parser:skip_balanced_parens()
+  local open = self:accept_punct("(")
+  if not open then
+    return
+  end
+  local depth = 1
+  while depth > 0 and self:peek() and self:peek().type ~= "eof" do
+    local token = self:next()
+    if token.type == "punct" and token.value == "(" then
+      depth = depth + 1
+    elseif token.type == "punct" and token.value == ")" then
+      depth = depth - 1
+    end
+  end
+  if depth > 0 then
+    self:error(self:peek(), "unclosed parenthesis")
+  end
+end
+
+--- Records blocks contain CSV-style sample data.  They are not part of
+--- the schema model, so parse the header and skip the body.
+function Parser:parse_records()
+  local keyword = self:next()
+  local name
+  local next_token = self:peek()
+  if next_token and next_token.type == "word" then
+    local parsed = self:parse_qualified_name()
+    name = parsed and parsed.name
+  end
+
+  if self:at_punct("(") then
+    self:skip_balanced_parens()
+  end
+
+  local settings, settings_range
+  if self:at_punct("[") then
+    settings, settings_range = self:parse_settings({ kind = "records" })
+  end
+
+  if self:at_punct("{") then
+    self:skip_balanced_block()
+  else
+    self:error(self:peek(), "expected a records block")
+    return nil
+  end
+
+  return {
+    kind = "records",
+    name = name,
+    settings = settings,
+    settings_range = settings_range,
+    range = { start = keyword.start, stop = self:last_stop() },
+  }
+end
+
+--- Consume a setting value without interpreting it.  Used to recover
+--- when an inline ref is malformed.
+function Parser:skip_setting_value(start_line)
+  local depth = 0
+  while true do
+    local token = self:peek()
+    if not token or token.type == "eof" or token.line > start_line then
+      break
+    end
+    if token.type == "punct" and depth == 0
+      and (token.value == "," or token.value == "]" or token.value == "}") then
+      break
+    end
+    if token.type == "punct" and (token.value == "(" or token.value == "[") then
+      depth = depth + 1
+    elseif token.type == "punct" and (token.value == ")" or token.value == "]") then
+      depth = depth - 1
+    end
     self:next()
   end
 end
 
--- Settings are the `[pk, not null, note: '...']` lists attached to
--- columns, indexes, and refs.  Values are kept as raw source text so
--- that hover can display them without re-implementing DBML formatting.
-function Parser:parse_settings()
+--- Parse the value of an inline `ref:` setting:
+---   [ref: > users.id]
+function Parser:parse_inline_ref(context, start_line)
+  local first = self:peek()
+  local operator = self:parse_operator()
+  if not operator then
+    self:skip_setting_value(start_line)
+    return nil
+  end
+
+  local target = self:parse_endpoint()
+  if not target then
+    self:skip_setting_value(start_line)
+    return nil
+  end
+
+  local parent = Ref.Endpoint.from_table_column(context.table, context.column)
+  return Ref.Reference.new({
+    from = parent,
+    to = target,
+    operator = operator,
+    source = "inline",
+    parent = parent,
+    range = { start = first.start, stop = target.range.stop },
+  })
+end
+
+-- Settings are the `[pk, not null, note: '...', ref: > users.id]` lists
+-- attached to columns, indexes, and refs.  Values are kept as raw source
+-- text for display; inline refs additionally get a structured
+-- dbml.Reference.
+function Parser:parse_settings(context)
   local open = self:expect_punct("[")
   if not open then
     return {}, nil
@@ -182,38 +303,65 @@ function Parser:parse_settings()
 
       if self:at_punct(":") then
         self:next()
-        local first_value = self:peek()
-        local depth = 0
-        local previous = nil
 
-        while true do
-          local value_token = self:peek()
-          if not value_token or value_token.type == "eof" then
-            break
+        if context and context.kind == "column" and setting.key:lower() == "ref" then
+          local first_value = self:peek()
+          local reference = self:parse_inline_ref(context, start_line)
+          local stop = self:last_stop()
+          if reference then
+            setting.ref = reference
+            setting.value_range = {
+              start = reference.range.start,
+              stop = reference.range.stop,
+            }
+          elseif first_value and stop > first_value.start then
+            -- Keep the raw range even when the endpoint is incomplete so
+            -- completion can still recognize the ref value it is typing.
+            setting.value_range = {
+              start = first_value.start,
+              stop = stop,
+            }
           end
-          if value_token.line > start_line then
-            break
+          if setting.value_range then
+            setting.value = self.text:sub(
+              setting.value_range.start + 1,
+              setting.value_range.stop
+            )
           end
-          if value_token.type == "punct" and depth == 0
-            and (value_token.value == "," or value_token.value == "]"
-              or value_token.value == "}") then
-            break
-          end
-          if value_token.type == "punct" and (value_token.value == "(" or value_token.value == "[") then
-            depth = depth + 1
-          elseif value_token.type == "punct" and (value_token.value == ")" or value_token.value == "]") then
-            depth = depth - 1
-          end
-          self:next()
-          previous = value_token
-        end
+        else
+          local first_value = self:peek()
+          local depth = 0
+          local previous = nil
 
-        if first_value and previous then
-          setting.value_range = { start = first_value.start, stop = previous.stop }
-          if first_value.type == "string" and first_value == previous then
-            setting.value = first_value.value
-          else
-            setting.value = self.text:sub(first_value.start + 1, previous.stop)
+          while true do
+            local value_token = self:peek()
+            if not value_token or value_token.type == "eof" then
+              break
+            end
+            if value_token.line > start_line then
+              break
+            end
+            if value_token.type == "punct" and depth == 0
+              and (value_token.value == "," or value_token.value == "]"
+                or value_token.value == "}") then
+              break
+            end
+            if value_token.type == "punct" and (value_token.value == "(" or value_token.value == "[") then
+              depth = depth + 1
+            elseif value_token.type == "punct" and (value_token.value == ")" or value_token.value == "]") then
+              depth = depth - 1
+            end
+            self:next()
+            previous = value_token
+          end
+
+          if first_value and previous then
+            setting.value_range = { start = first_value.start, stop = previous.stop }
+            if first_value.type == "string" and first_value == previous then
+              setting.value = first_value.value
+            else
+              setting.value = self.text:sub(first_value.start + 1, previous.stop)
+            end
           end
         end
       end
@@ -246,10 +394,28 @@ function Parser:parse_column(table)
   }
 
   local type_token = self:peek()
-  if type_token and type_token.type == "word" and type_token.line == name_token.line then
+  if type_token
+    and (type_token.type == "word" or type_token.type == "string")
+    and type_token.line == name_token.line then
     self:next()
-    column.type = type_token.value
-    column.type_range = { start = type_token.start, stop = type_token.stop }
+    local type_stop = type_token.stop
+    local qualified_type = false
+
+    -- Schema-qualified types: v2.job_status
+    while self:at_punct(".") do
+      local following = self:peek(1)
+      if not following or (following.type ~= "word" and following.type ~= "string")
+        or following.line ~= name_token.line then
+        break
+      end
+      self:next()
+      type_stop = self:next().stop
+      qualified_type = true
+    end
+
+    column.type = qualified_type and self.text:sub(type_token.start + 1, type_stop)
+      or type_token.value
+    column.type_range = { start = type_token.start, stop = type_stop }
 
     -- Type parameters: varchar(255), decimal(10,2), ...
     if self:at_punct("(") then
@@ -277,7 +443,11 @@ function Parser:parse_column(table)
   end
 
   if self:at_punct("[") and self:peek().line == name_token.line then
-    local settings, range = self:parse_settings()
+    local settings, range = self:parse_settings({
+      kind = "column",
+      table = table,
+      column = column,
+    })
     column.settings = settings
     column.settings_range = range
   end
@@ -317,6 +487,121 @@ function Parser:parse_note()
   }
 end
 
+function Parser:parse_parenthesized_index()
+  local open = self:next() -- (
+  local tokens = {}
+  local depth = 0
+
+  while self:peek() and self:peek().type ~= "eof" do
+    local token = self:peek()
+    if token.type == "punct" and token.value == ")" and depth == 0 then
+      break
+    end
+    self:next()
+    tokens[#tokens + 1] = token
+    if token.type == "punct" and (token.value == "(" or token.value == "[") then
+      depth = depth + 1
+    elseif token.type == "punct" and (token.value == ")" or token.value == "]") then
+      depth = depth - 1
+    end
+  end
+
+  local close = self:accept_punct(")")
+  if not close then
+    self:error(self:peek(), "unclosed index expression")
+  end
+  if #tokens == 0 then
+    self:error(close or self:peek(), "empty index expression")
+  end
+
+  local columns = {}
+  local complex = false
+  for _, token in ipairs(tokens) do
+    if token.type == "word" or token.type == "string" then
+      columns[#columns + 1] = {
+        name = token.value,
+        range = { start = token.start, stop = token.stop },
+      }
+    elseif not (token.type == "punct" and token.value == ",") then
+      complex = true
+    end
+  end
+
+  local stop = close and close.stop or self:last_stop()
+  if complex or #columns == 0 then
+    return {
+      kind = "index",
+      columns = {},
+      expressions = {
+        {
+          text = self.text:sub(open.start + 2, close and close.start or #self.text),
+          range = { start = open.start, stop = stop },
+        },
+      },
+      has_expression = true,
+      start = open.start,
+      stop = stop,
+    }
+  end
+
+  return {
+    kind = "index",
+    columns = columns,
+    expressions = {},
+    has_expression = false,
+    start = open.start,
+    stop = stop,
+  }
+end
+
+function Parser:parse_index_entry()
+  local token = self:peek()
+  if not token then
+    return nil
+  end
+
+  local entry
+  if self:at_punct("(") then
+    entry = self:parse_parenthesized_index()
+  elseif token.type == "word" or token.type == "string" then
+    self:next()
+    entry = {
+      kind = "index",
+      columns = {
+        { name = token.value, range = { start = token.start, stop = token.stop } },
+      },
+      expressions = {},
+      has_expression = false,
+      start = token.start,
+      stop = token.stop,
+    }
+  elseif token.type == "expression" then
+    self:next()
+    entry = {
+      kind = "index",
+      columns = {},
+      expressions = {
+        { text = token.value, range = { start = token.start, stop = token.stop } },
+      },
+      has_expression = true,
+      start = token.start,
+      stop = token.stop,
+    }
+  else
+    self:error(token, "expected an index column or expression")
+    self:next()
+    return nil
+  end
+
+  if self:at_punct("[") then
+    entry.settings, entry.settings_range = self:parse_settings({ kind = "index" })
+  end
+  entry.settings = entry.settings or {}
+  entry.stop = entry.settings_range and entry.settings_range.stop or entry.stop
+  entry.range = { start = entry.start, stop = entry.stop }
+  return entry
+end
+
 function Parser:parse_indexes(table)
   local keyword = self:next()
   local open = self:expect_punct("{")
@@ -326,43 +611,9 @@ function Parser:parse_indexes(table)
 
   local indexes = {}
   while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
-    if self:at_punct("(") then
-      local paren = self:next()
-      local columns = {}
-      while self:peek() and self:peek().type ~= "eof" and not self:at_punct(")") do
-        local token = self:peek()
-        if token.type == "word" or token.type == "string" then
-          self:next()
-          columns[#columns + 1] = {
-            name = token.value,
-            range = { start = token.start, stop = token.stop },
-          }
-        else
-          self:error(token, "expected a column name in index")
-          self:next()
-        end
-        self:accept_punct(",")
-      end
-      local close_paren = self:accept_punct(")")
-      local settings, settings_range
-      if self:at_punct("[") then
-        settings, settings_range = self:parse_settings()
-      end
-      indexes[#indexes + 1] = {
-        kind = "index",
-        columns = columns,
-        settings = settings or {},
-        settings_range = settings_range,
-        range = {
-          start = paren.start,
-          stop = (settings_range and settings_range.stop)
-            or (close_paren and close_paren.stop)
-            or paren.stop,
-        },
-      }
-    else
-      self:error(self:peek(), "expected '(' in indexes block")
-      self:next()
+    local entry = self:parse_index_entry()
+    if entry then
+      indexes[#indexes + 1] = entry
     end
   end
 
@@ -397,6 +648,7 @@ function Parser:parse_table(partial)
     name_range = qualified.range,
     columns = {},
     indexes = {},
+    includes = {},
     start = keyword.start,
   }
 
@@ -416,7 +668,10 @@ function Parser:parse_table(partial)
 
   -- Optional table settings: Table users [headercolor: #3498DB] { ... }
   if self:at_punct("[") then
-    table.settings, table.settings_range = self:parse_settings()
+    table.settings, table.settings_range = self:parse_settings({
+      kind = "table",
+      table = table,
+    })
   end
 
   local open = self:expect_punct("{")
@@ -437,7 +692,25 @@ function Parser:parse_table(partial)
       and self:peek(1) and self:peek(1).value == ":" then
       table.note = self:parse_note()
     elseif token.type == "punct" and token.value == "~" then
-      self:skip_line()
+      self:next()
+      local include = self:parse_qualified_name()
+      if include then
+        table.includes[#table.includes + 1] = {
+          name = include.name,
+          range = include.range,
+        }
+      else
+        self:error(token, "expected a table partial name")
+      end
+    elseif token.type == "word" and token.value:lower() == "checks"
+      and self:peek(1) and self:peek(1).value == "{" then
+      self:next()
+      self:skip_balanced_block()
+    elseif token.type == "word" and token.value:lower() == "records"
+      and self:peek(1)
+      and (self:peek(1).value == "(" or self:peek(1).value == "{"
+        or self:peek(1).value == "[") then
+      self:parse_records()
     elseif token.type == "word" or token.type == "string" then
       self:parse_column(table)
     else
@@ -459,26 +732,35 @@ end
 
 function Parser:parse_enum()
   local keyword = self:next()
-  local name = self:parse_name()
-  if not name then
+  local qualified = self:parse_qualified_name()
+  if not qualified then
     return nil
   end
 
   local enum = {
     kind = "enum",
-    name = name.name,
-    name_range = name.range,
+    name = qualified.name,
+    full_name = qualified.name,
+    name_range = qualified.range,
     values = {},
     start = keyword.start,
   }
 
+  if #qualified.parts > 1 then
+    enum.name = qualified.parts[#qualified.parts]
+    enum.schema = concat(qualified.parts, ".", 1, #qualified.parts - 1)
+  end
+
   if self:at_punct("[") then
-    enum.settings, enum.settings_range = self:parse_settings()
+    enum.settings, enum.settings_range = self:parse_settings({
+      kind = "enum",
+      enum = enum,
+    })
   end
 
   local open = self:expect_punct("{")
   if not open then
-    enum.stop = name.range.stop
+    enum.stop = qualified.range.stop
     enum.range = { start = keyword.start, stop = enum.stop }
     return enum
   end
@@ -498,7 +780,11 @@ function Parser:parse_enum()
         settings = {},
       }
       if self:at_punct("[") and self:peek().line == token.line then
-        value.settings, value.settings_range = self:parse_settings()
+        value.settings, value.settings_range = self:parse_settings({
+          kind = "enum_value",
+          enum = enum,
+          value = value,
+        })
       end
       value.stop = (value.settings_range and value.settings_range.stop) or token.stop
       value.range = { start = value.start, stop = value.stop }
@@ -525,60 +811,128 @@ function Parser:parse_endpoint()
     return nil
   end
 
-  local endpoint = {
-    parts = qualified.parts,
-    ranges = qualified.ranges,
-    name = qualified.name,
-    range = qualified.range,
-    table = qualified.parts[#qualified.parts - 1],
-    column = qualified.parts[#qualified.parts],
-  }
+  local parts = qualified.parts
+  local ranges = qualified.ranges
 
-  if #qualified.parts >= 2 then
-    endpoint.table = qualified.parts[#qualified.parts - 1]
-    endpoint.column = qualified.parts[#qualified.parts]
-    endpoint.table_range = qualified.ranges[#qualified.ranges - 1]
-    endpoint.column_range = qualified.ranges[#qualified.ranges]
-    if #qualified.parts > 2 then
-      endpoint.schema = table.concat(qualified.parts, ".", 1, #qualified.parts - 2)
+  -- Composite form: table.(column1, column2)
+  if self:at_punct(".") and self:peek(1) and self:peek(1).value == "(" then
+    self:next() -- .
+    local open = self:next() -- (
+    local columns = {}
+
+    while self:peek() and self:peek().type ~= "eof" and not self:at_punct(")") do
+      local token = self:peek()
+      if token.type == "word" or token.type == "string" then
+        self:next()
+        columns[#columns + 1] = {
+          name = token.value,
+          range = { start = token.start, stop = token.stop },
+        }
+      elseif token.type == "punct" and token.value == "," then
+        self:next()
+      else
+        self:error(token, "expected a column name in composite reference")
+        self:next()
+      end
     end
-  else
-    endpoint.table = qualified.parts[1]
-    endpoint.column = nil
-    endpoint.table_range = qualified.ranges[1]
-    self:error(self:peek(), "expected 'table.column' reference")
+
+    local close = self:accept_punct(")")
+    if not close then
+      self:error(self:peek(), "unclosed composite reference")
+    end
+    if #columns == 0 then
+      self:error(close or self:peek(), "expected at least one column in composite reference")
+      return nil
+    end
+
+    return Ref.Endpoint.new({
+      schema = #parts > 1 and concat(parts, ".", 1, #parts - 1) or nil,
+      table = parts[#parts],
+      columns = columns,
+      parts = parts,
+      ranges = ranges,
+      range = {
+        start = qualified.range.start,
+        stop = close and close.stop or self:last_stop(),
+      },
+      table_range = qualified.range,
+      column_range = {
+        start = open.start,
+        stop = close and close.stop or self:last_stop(),
+      },
+    })
   end
 
-  return endpoint
+  if #parts < 2 then
+    self:error(self:peek(), "expected 'table.column' reference")
+    return nil
+  end
+
+  return Ref.Endpoint.new({
+    schema = #parts > 2 and concat(parts, ".", 1, #parts - 2) or nil,
+    table = parts[#parts - 1],
+    column = parts[#parts],
+    parts = parts,
+    ranges = ranges,
+    name = qualified.name,
+    range = qualified.range,
+    table_range = ranges[#ranges - 1],
+    column_range = ranges[#ranges],
+  })
 end
 
-function Parser:parse_ref_expression()
+function Parser:parse_operator()
+  local first = self:peek()
+  if not first or first.type ~= "punct" then
+    self:error(first, "expected a relationship operator")
+    return nil
+  end
+
+  local has_prefix = first.value == "?"
+  if has_prefix then
+    self:next()
+  end
+
+  local core = self:peek()
+  if not core or core.type ~= "punct" or not Ref.OPERATORS[core.value] then
+    self:error(core, "expected a relationship operator")
+    return nil
+  end
+  self:next()
+
+  local has_suffix = false
+  local after = self:peek()
+  if after and after.type == "punct" and after.value == "?" then
+    self:next()
+    has_suffix = true
+  end
+
+  return (has_prefix and "?" or "") .. core.value .. (has_suffix and "?" or "")
+end
+
+function Parser:parse_ref_expression(source)
   local left = self:parse_endpoint()
   if not left then
     return nil
   end
 
-  local operator = self:peek()
-  if not operator or operator.type ~= "punct"
-    or (operator.value ~= ">" and operator.value ~= "<"
-      and operator.value ~= "-" and operator.value ~= "<>") then
-    self:error(operator, "expected a relationship operator")
+  local operator = self:parse_operator()
+  if not operator then
     return nil
   end
-  self:next()
 
   local right = self:parse_endpoint()
   if not right then
     return nil
   end
 
-  return {
-    kind = "ref_expression",
+  return Ref.Reference.new({
     from = left,
     to = right,
-    operator = operator.value,
+    operator = operator,
+    source = source or "top_level",
     range = { start = left.range.start, stop = right.range.stop },
-  }
+  })
 end
 
 function Parser:parse_ref()
@@ -599,10 +953,14 @@ function Parser:parse_ref()
 
   if self:at_punct(":") then
     self:next()
-    local expression = self:parse_ref_expression()
+    local expression = self:parse_ref_expression("top_level")
     if expression then
       if self:at_punct("[") then
-        expression.settings, expression.settings_range = self:parse_settings()
+        expression.settings, expression.settings_range = self:parse_settings({
+          kind = "ref",
+          ref = ref,
+          expression = expression,
+        })
       end
       ref.expressions[#ref.expressions + 1] = expression
     end
@@ -610,10 +968,14 @@ function Parser:parse_ref()
     local open = self:next()
     ref.body_start = open.stop
     while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
-      local expression = self:parse_ref_expression()
+      local expression = self:parse_ref_expression("top_level")
       if expression then
         if self:at_punct("[") then
-          expression.settings, expression.settings_range = self:parse_settings()
+          expression.settings, expression.settings_range = self:parse_settings({
+            kind = "ref",
+            ref = ref,
+            expression = expression,
+          })
         end
         ref.expressions[#ref.expressions + 1] = expression
       else
@@ -655,7 +1017,10 @@ function Parser:parse_table_group()
   }
 
   if self:at_punct("[") then
-    group.settings, group.settings_range = self:parse_settings()
+    group.settings, group.settings_range = self:parse_settings({
+      kind = "table_group",
+      group = group,
+    })
   end
 
   local open = self:expect_punct("{")
@@ -668,7 +1033,10 @@ function Parser:parse_table_group()
 
   while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
     local token = self:peek()
-    if token.type == "word" or token.type == "string" then
+    if token.type == "word" and token.value:lower() == "note"
+      and self:peek(1) and self:peek(1).value == ":" then
+      group.note = self:parse_note()
+    elseif token.type == "word" or token.type == "string" then
       local member = self:parse_qualified_name()
       group.members[#group.members + 1] = {
         name = member.name,
@@ -780,6 +1148,8 @@ function Parser:parse_statement()
       return self:parse_table_group()
     elseif keyword == "project" then
       return self:parse_project()
+    elseif keyword == "records" then
+      return self:parse_records()
     end
   end
 

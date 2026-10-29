@@ -28,6 +28,12 @@ local KEYWORDS = {
     documentation = "Define a relationship between two columns.",
   },
   {
+    label = "TablePartial",
+    detail = "reusable table partial",
+    snippet = "TablePartial ${1:name} {\n  ${2:id} ${3:integer}\n}",
+    documentation = "Define reusable columns and settings for tables.",
+  },
+  {
     label = "TableGroup",
     detail = "table group",
     snippet = "TableGroup ${1:name} {\n  ${2:table}\n}",
@@ -359,11 +365,12 @@ local function type_items(document, prefix_start, offset, analysis)
     }, false))
   end
   for _, enum in ipairs(analysis.symbols.enum_list) do
+    local label = enum.full_name or enum.name
     push(items, seen, make_item(document, prefix_start, offset, {
-      label = enum.name,
+      label = label,
       kind = 10, -- Enum
       detail = "enum type",
-      sort_text = "1_" .. enum.name,
+      sort_text = "1_" .. label,
     }, false))
   end
   return items
@@ -385,20 +392,23 @@ end
 local function table_items(document, prefix_start, offset, analysis, include_enums)
   local items, seen = {}, {}
   for _, table in ipairs(analysis.symbols.table_list) do
-    push(items, seen, make_item(document, prefix_start, offset, {
-      label = table.full_name,
-      kind = 5, -- Class
-      detail = table.alias and ("table (alias " .. table.alias .. ")") or "table",
-      sort_text = "2_" .. table.full_name,
-    }, false))
+    if not table.partial then
+      push(items, seen, make_item(document, prefix_start, offset, {
+        label = table.full_name,
+        kind = 5, -- Class
+        detail = table.alias and ("table (alias " .. table.alias .. ")") or "table",
+        sort_text = "2_" .. table.full_name,
+      }, false))
+    end
   end
   if include_enums ~= false then
     for _, enum in ipairs(analysis.symbols.enum_list) do
+      local label = enum.full_name or enum.name
       push(items, seen, make_item(document, prefix_start, offset, {
-        label = enum.name,
+        label = label,
         kind = 10, -- Enum
         detail = "enum",
-        sort_text = "2_" .. enum.name,
+        sort_text = "2_" .. label,
       }, false))
     end
   end

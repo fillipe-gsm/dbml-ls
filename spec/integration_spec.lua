@@ -23,6 +23,25 @@ local function read_frames(path)
   return messages
 end
 
+local function response_for(messages, id)
+  for _, message in ipairs(messages) do
+    if message.id == id and message.result ~= nil then
+      return message
+    end
+  end
+  return nil
+end
+
+local function notifications_for(messages, method)
+  local result = {}
+  for _, message in ipairs(messages) do
+    if message.method == method then
+      result[#result + 1] = message
+    end
+  end
+  return result
+end
+
 describe("integration", function()
   it("runs the real stdio entrypoint through a full session", function()
     local input_path = os.tmpname()
@@ -70,18 +89,29 @@ describe("integration", function()
     assert.equal(0, code)
 
     local messages = read_frames(output_path)
-    assert.equal(3, #messages)
+    assert.equal(4, #messages)
 
-    assert.equal("utf-8", messages[1].result.capabilities.positionEncoding)
-    assert.equal("dbml-ls", messages[1].result.serverInfo.name)
+    local initialized = response_for(messages, 1)
+    assert.is_not_nil(initialized)
+    assert.equal("utf-8", initialized.result.capabilities.positionEncoding)
+    assert.equal("dbml-ls", initialized.result.serverInfo.name)
 
+    local published = notifications_for(messages, "textDocument/publishDiagnostics")
+    assert.equal(1, #published)
+    assert.equal("file:///integration.dbml", published[1].params.uri)
+    assert.same({}, published[1].params.diagnostics)
+
+    local completion = response_for(messages, 2)
+    assert.is_not_nil(completion)
     local labels = {}
-    for _, item in ipairs(messages[2].result.items) do
+    for _, item in ipairs(completion.result.items) do
       labels[item.label] = true
     end
     assert.is_true(labels.integer)
 
-    assert.equal(json.null, messages[3].result)
+    local shutdown = response_for(messages, 3)
+    assert.is_not_nil(shutdown)
+    assert.equal(json.null, shutdown.result)
 
     os.remove(input_path)
     os.remove(output_path)

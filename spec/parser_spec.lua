@@ -151,6 +151,146 @@ TableGroup core [note: 'core tables'] {
     assert.equal("public.users", ast.groups[1].members[1].name)
   end)
 
+  it("records inline refs as structured references", function()
+    local ast = parse([[
+Table users {
+  id integer
+}
+Table orders {
+  user_id integer [ref: > users.id]
+}
+]])
+    local setting = ast.tables[2].columns[1].settings[1]
+
+    assert.equal("ref", setting.key)
+    assert.equal("> users.id", setting.value)
+    assert.is_not_nil(setting.ref)
+    assert.equal("inline", setting.ref.source)
+    assert.equal("orders.user_id", setting.ref.from.name)
+    assert.equal("users.id", setting.ref.to.name)
+  end)
+
+  it("handles a single-line partial include without swallowing the brace", function()
+    local ast, errors = parse("TablePartial base { id integer }\nTable users { ~base }\n")
+    assert.equal(0, #errors)
+    assert.equal("base", ast.tables[2].includes[1].name)
+    assert.equal(0, #ast.tables[2].columns)
+  end)
+
+  it("records table partial includes", function()
+    local ast = parse([[
+TablePartial base {
+  id integer
+}
+Table users {
+  ~base
+  name varchar
+}
+]])
+    assert.equal("base", ast.tables[2].includes[1].name)
+    assert.equal("name", ast.tables[2].columns[1].name)
+  end)
+
+  it("supports quoted multi-word types", function()
+    local ast = parse('Table users {\n  score "double precision"\n}')
+    assert.equal("double precision", ast.tables[1].columns[1].type)
+  end)
+
+  it("supports schema-qualified enums", function()
+    local ast = parse("Enum v2.job_status {\n  active\n}\nTable jobs {\n  status v2.job_status\n}")
+    assert.equal("v2.job_status", ast.enums[1].full_name)
+    assert.equal("job_status", ast.enums[1].name)
+    assert.equal("v2", ast.enums[1].schema)
+    assert.equal("v2.job_status", ast.tables[1].columns[1].type)
+  end)
+
+  it("parses optional relationship markers", function()
+    local ast = parse([[
+Table a {
+  id integer
+}
+Table b {
+  id integer
+}
+Ref: a.id ?> b.id
+Ref: a.id >? b.id
+]])
+    assert.equal("?>", ast.refs[1].expressions[1].operator)
+    assert.equal(">?", ast.refs[2].expressions[1].operator)
+  end)
+
+  it("parses composite references", function()
+    local ast = parse([[
+Table merchant_periods {
+  merchant_id integer
+  country_code varchar
+}
+Table merchants {
+  id integer
+  country_code varchar
+}
+Ref: merchant_periods.(merchant_id, country_code) > merchants.(id, country_code)
+]])
+    local expression = ast.refs[1].expressions[1]
+    assert.equal("merchant_periods", expression.from.table)
+    assert.is_nil(expression.from.column)
+    assert.equal(2, #expression.from.columns)
+    assert.equal("merchant_id", expression.from.columns[1].name)
+    assert.equal("country_code", expression.from.columns[2].name)
+    assert.equal(2, #expression.to.columns)
+  end)
+
+  it("parses all index forms", function()
+    local ast, errors = parse([[
+Table bookings {
+  id integer
+  country varchar
+  booking_date date
+  created_at timestamp
+  indexes {
+    created_at [name: 'created_at_index']
+    booking_date
+    (id, country) [pk]
+    (`id*2`)
+    (id*3, id)
+    (country, booking_date) [unique]
+  }
+}
+]])
+    assert.equal(0, #errors)
+    local indexes = ast.tables[1].indexes
+    assert.equal(6, #indexes)
+    assert.equal("created_at", indexes[1].columns[1].name)
+    assert.equal("created_at_index", indexes[1].settings[1].value)
+    assert.equal(1, #indexes[2].columns)
+    assert.equal(2, #indexes[3].columns)
+    assert.is_true(indexes[4].has_expression)
+    assert.equal(0, #indexes[4].columns)
+    assert.is_true(indexes[5].has_expression)
+    assert.equal(2, #indexes[6].columns)
+  end)
+
+  it("parses checks and records blocks", function()
+    local ast, errors = parse([[
+Table users {
+  id integer
+  checks {
+    `id > 0` [name: 'chk_positive']
+  }
+  records (id) {
+    1
+    2
+  }
+}
+records users(id) [example] {
+  1
+}
+]])
+    assert.equal(0, #errors)
+    assert.equal(1, #ast.tables)
+    assert.equal(1, #ast.tables[1].columns)
+  end)
+
   it("supports quoted identifiers", function()
     local ast = parse('Table "my table" {\n  "my col" integer\n}')
     assert.equal("my table", ast.tables[1].name)

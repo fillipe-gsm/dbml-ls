@@ -26,6 +26,16 @@ local function initialize(server, capabilities)
   })
 end
 
+local function notifications(sent, method)
+  local result = {}
+  for _, message in ipairs(sent) do
+    if message.method == method then
+      result[#result + 1] = message
+    end
+  end
+  return result
+end
+
 local function open(server, text)
   server:dispatch({
     jsonrpc = "2.0",
@@ -122,6 +132,61 @@ describe("server", function()
     end
     assert.is_true(labels.integer)
     assert.is_true(labels.varchar)
+  end)
+
+  it("publishes diagnostics when a document opens", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id\n}\n")
+
+    local published = notifications(sent, "textDocument/publishDiagnostics")
+    assert.equal(1, #published)
+    assert.equal(URI, published[1].params.uri)
+    assert.equal(1, published[1].params.version)
+    assert.is_true(#published[1].params.diagnostics > 0)
+    assert.equal("syntax", published[1].params.diagnostics[1].code)
+  end)
+
+  it("publishes an empty diagnostic list for valid documents", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    local published = notifications(sent, "textDocument/publishDiagnostics")
+    assert.equal(1, #published)
+    assert.same({}, published[1].params.diagnostics)
+  end)
+
+  it("republishes on change and clears on close", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      method = "textDocument/didChange",
+      params = {
+        textDocument = { uri = URI, version = 2 },
+        contentChanges = { { text = "Table users {\n  id\n}\n" } },
+      },
+    })
+
+    local published = notifications(sent, "textDocument/publishDiagnostics")
+    assert.equal(2, #published)
+    assert.equal(2, published[2].params.version)
+    assert.is_true(#published[2].params.diagnostics > 0)
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      method = "textDocument/didClose",
+      params = { textDocument = { uri = URI } },
+    })
+
+    published = notifications(sent, "textDocument/publishDiagnostics")
+    assert.equal(3, #published)
+    assert.equal(URI, published[3].params.uri)
+    assert.same({}, published[3].params.diagnostics)
+    assert.is_nil(server.documents[URI])
   end)
 
   it("applies full-text changes", function()

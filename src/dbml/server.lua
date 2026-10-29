@@ -7,6 +7,7 @@ local analysis = require("dbml.analysis")
 local completion = require("dbml.completion")
 local hover = require("dbml.hover")
 local symbols = require("dbml.symbols")
+local diagnostics_engine = require("dbml.diagnostics")
 
 local Server = {}
 Server.__index = Server
@@ -172,6 +173,30 @@ end
 function Server.handle_noop()
 end
 
+function Server:publish_diagnostics(document)
+  local ok, result = pcall(function()
+    local analyzed = analysis.get(document)
+    return diagnostics_engine.diagnose(analyzed, document)
+  end)
+  if not ok then
+    log.error("diagnostics failed: %s", tostring(result))
+    return
+  end
+
+  self:notify("textDocument/publishDiagnostics", {
+    uri = document.uri,
+    version = document.version,
+    diagnostics = result,
+  })
+end
+
+function Server:clear_diagnostics(uri)
+  self:notify("textDocument/publishDiagnostics", {
+    uri = uri,
+    diagnostics = json.array({}),
+  })
+end
+
 function Server:handle_did_open(params)
   local text_document = params.textDocument
   if not text_document or not text_document.uri then
@@ -180,6 +205,7 @@ function Server:handle_did_open(params)
   local document = Document.new(text_document.uri, text_document.text, text_document.version)
   document.encoding = self.position_encoding
   self.documents[text_document.uri] = document
+  self:publish_diagnostics(document)
 end
 
 function Server:handle_did_change(params)
@@ -189,14 +215,20 @@ function Server:handle_did_change(params)
   end
   local text_document = params.textDocument or {}
   local version = text_document.version or (document.version + 1)
-  for _, change in ipairs(params.contentChanges or {}) do
+  local changes = params.contentChanges or {}
+  if #changes == 0 then
+    return
+  end
+  for _, change in ipairs(changes) do
     document:apply_change(change, version)
   end
+  self:publish_diagnostics(document)
 end
 
 function Server:handle_did_close(params)
   local document = self:document_for(params)
   if document then
+    self:clear_diagnostics(document.uri)
     self.documents[document.uri] = nil
   end
 end

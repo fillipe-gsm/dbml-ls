@@ -16,6 +16,10 @@ describe("completion", function()
     assert.equal("Table", table_item.textEdit.newText)
   end)
 
+  it("offers TablePartial as a top-level keyword", function()
+    assert.is_true(labels("TableP|").TablePartial)
+  end)
+
   it("does not offer keywords while a table name is being typed", function()
     assert.same({}, support.complete_at("Table |"))
     assert.same({}, support.complete_at("Enum |"))
@@ -88,6 +92,13 @@ describe("completion", function()
   it("offers tables in an inline column ref", function()
     local result = labels(
       "Table users {\n  id integer\n}\nTable orders {\n  user_id integer [ref: > |"
+    )
+    assert.is_true(result.users)
+  end)
+
+  it("offers tables while typing an inline ref target", function()
+    local result = labels(
+      "Table users {\n  id integer\n}\nTable orders {\n  user_id integer [ref: > us|"
     )
     assert.is_true(result.users)
   end)

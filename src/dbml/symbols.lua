@@ -43,6 +43,7 @@ function M.build(ast)
 
   for _, enum in ipairs(ast.enums) do
     symbols.enum_list[#symbols.enum_list + 1] = enum
+    put_first(symbols.enums, enum.full_name or enum.name, enum)
     put_first(symbols.enums, enum.name, enum)
   end
 
@@ -136,7 +137,7 @@ function M.document_symbols(ast, document)
         }
       end
       local symbol = {
-        name = statement.name,
+        name = statement.full_name or statement.name,
         kind = 10, -- Enum
         detail = "enum",
         range = lsp_range(document, statement.range),

@@ -44,6 +44,13 @@ describe("lexer", function()
     assert.equal("hello\nworld", string.value)
   end)
 
+  it("tokenizes backtick expressions", function()
+    local tokens = lexer.tokenize("default: `now() - interval '5 days'`")
+    local expression = tokens[3]
+    assert.equal("expression", expression.type)
+    assert.equal("now() - interval '5 days'", expression.value)
+  end)
+
   it("supports triple-quoted strings", function()
     local tokens = lexer.tokenize("Note: '''line one\nline two'''")
     assert.equal("line one\nline two", tokens[3].value)

@@ -79,7 +79,7 @@ local function column_markdown(table, column, analysis)
 end
 
 local function enum_markdown(enum)
-  local lines = { "**Enum** `" .. enum.name .. "`" }
+  local lines = { "**Enum** `" .. (enum.full_name or enum.name) .. "`" }
   if #enum.values > 0 then
     lines[#lines + 1] = ""
     for _, value in ipairs(enum.values) do
@@ -114,18 +114,31 @@ local function ref_markdown(ref)
 end
 
 local function index_markdown(table, index)
-  local names = {}
-  for _, column in ipairs(index.columns) do
-    names[#names + 1] = column.name
+  local lines = { "**Index** on `" .. table.full_name .. "`" }
+
+  if index.columns and #index.columns > 0 then
+    local names = {}
+    for _, column in ipairs(index.columns) do
+      names[#names + 1] = column.name
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "Columns: " .. concat(names, ", ")
   end
-  local lines = {
-    "**Index** on `" .. table.full_name .. "`",
-    "",
-    "Columns: " .. concat(names, ", "),
-  }
+
+  if index.expressions and #index.expressions > 0 then
+    local expressions = {}
+    for _, expression in ipairs(index.expressions) do
+      expressions[#expressions + 1] = expression.text
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "Expressions: " .. concat(expressions, ", ")
+  end
+
   if index.settings and #index.settings > 0 then
+    lines[#lines + 1] = ""
     lines[#lines + 1] = "Settings: " .. settings_text(index.settings)
   end
+
   return concat(lines, "\n")
 end
 
@@ -204,6 +217,28 @@ local function find_symbol(analysis, offset)
 
   for _, ref in ipairs(analysis.ast.refs) do
     for _, expression in ipairs(ref.expressions) do
+      if expression.from.columns then
+        for _, column in ipairs(expression.from.columns) do
+          if contains(column.range, offset) then
+            local table = symbols.find_table(analysis.symbols, expression.from.table)
+            local resolved = table and local_column(table, column.name)
+            if resolved then
+              return { kind = "column", table = table, column = resolved, range = column.range }
+            end
+          end
+        end
+      end
+      if expression.to.columns then
+        for _, column in ipairs(expression.to.columns) do
+          if contains(column.range, offset) then
+            local table = symbols.find_table(analysis.symbols, expression.to.table)
+            local resolved = table and local_column(table, column.name)
+            if resolved then
+              return { kind = "column", table = table, column = resolved, range = column.range }
+            end
+          end
+        end
+      end
       if contains(expression.from.column_range, offset) then
         local table = symbols.find_table(analysis.symbols, expression.from.table)
         local column = table and local_column(table, expression.from.column)

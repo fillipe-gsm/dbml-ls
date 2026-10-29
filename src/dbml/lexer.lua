@@ -100,6 +100,32 @@ function M.tokenize(text)
         record_error("unterminated block comment", start_offset, start_line, start_col)
       end
 
+    elseif char == "`" then
+      local start_offset, start_line, start_col = i - 1, line, col
+      bump()
+      local buffer = {}
+      local closed = false
+      while i <= n do
+        if text:sub(i, i) == "`" then
+          bump()
+          closed = true
+          break
+        end
+        buffer[#buffer + 1] = text:sub(i, i)
+        bump()
+      end
+      if not closed then
+        record_error("unterminated expression", start_offset, start_line, start_col)
+      end
+      tokens[#tokens + 1] = {
+        type = "expression",
+        value = table.concat(buffer),
+        start = start_offset,
+        stop = i - 1,
+        line = start_line,
+        col = start_col,
+      }
+
     elseif char == "'" or char == '"' then
       local start_offset, start_line, start_col = i - 1, line, col
       local triple = text:sub(i, i + 2) == char:rep(3)
