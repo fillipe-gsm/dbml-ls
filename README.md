@@ -1,10 +1,47 @@
 # dbml-ls
 
-A DBML language server written in Lua 5.4.
+A [Database Markup Language (DBML)](https://dbml.dbdiagram.io/home) language server written in Lua 5.4.
 
-It is editor-agnostic and speaks the Language Server Protocol over
-stdin/stdout, so Neovim, VS Code, or any other LSP client can use it
-without an HTTP server or a socket.
+It is editor-agnostic and speaks the Language Server Protocol over stdin/stdout, so Neovim, VS Code, or any other LSP client can use it without an HTTP server or a socket.
+
+> [!WARNING]
+> This is still in open alpha and there is no user-friendly installation method other than cloning the repo and calling its `main.lua` file. Once it is better tested it will be published in something like LuaRocks.
+
+## Requirements
+
+- Lua 5.4+
+
+## Running
+
+After cloning the repo, from the project root, run:
+
+```sh
+lua src/main.lua
+```
+
+## Editors configuration
+
+### Neovim
+
+Neovim does not know the `dbml` filetype by default, so register it and start the server for that filetype:
+
+```lua
+vim.filetype.add({ extension = { dbml = "dbml" } })
+
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "dbml",
+  callback = function(args)
+    vim.lsp.start({
+      name = "dbml-ls",
+      cmd = { "lua", "/absolute/path/to/dbml-ls/src/main.lua" },
+      root_dir = vim.fs.dirname(vim.api.nvim_buf_get_name(args.buf)),
+    })
+  end,
+})
+```
+
+If you use a completion plugin such as `nvim-cmp` or the built-in `vim.lsp.completion`, it will consume the server's completion items.
+
 
 ## Status
 
@@ -45,7 +82,27 @@ Not implemented yet:
   plugin, not in the language server)
 - Semantic tokens
 
-## Diagnostics
+
+## Notes and limitations
+
+- **Single file only.** The server parses the buffer sent by the client;
+  it does not scan the workspace for other `.dbml` files. Cross-file refs
+  and workspace-wide completion are not supported, which is why
+  unresolved refs are diagnostics warnings rather than errors.
+- **Table partials are not merged.** `~base` includes are recorded and
+  validated, but inherited columns are not added to the including table.
+  Diagnostics therefore skip column-resolution checks for tables with
+  partial includes.
+- DBML column types are free-form. The type list in completion is a set
+  of suggestions, not a validation list.
+- Index expressions, `checks` contents, and `records` sample data are
+  parsed/skipped but not semantically validated yet.
+- The parser is deliberately error-tolerant so completion keeps working
+  while a statement is half-typed.
+- Logs go to stderr only; stdout is reserved for the protocol.
+
+## Development Details
+### Diagnostics
 
 Diagnostics are pushed on `textDocument/didOpen` and `didChange`, and
 cleared on `didClose`. They use `source = "dbml-ls"` with stable codes.
@@ -73,7 +130,7 @@ parser does not merge yet; unresolved-column checks are skipped for those
 tables to avoid false positives. Explicit duplicate columns are still
 reported.
 
-## Go to definition
+### Go to definition
 
 `textDocument/definition` resolves the symbol under the cursor within the
 current buffer:
@@ -92,21 +149,18 @@ the useful token rather than the whole block. Cross-file definitions are
 not supported; unresolved targets return `null`, matching the single-file
 scope.
 
-In Neovim, a buffer-local `gd` mapping is added when the server attaches.
-You can also call `vim.lsp.buf.definition()` directly.
-
 Resolving an enum value used in a `default:` string (for example
 `default: 'barbell'` on an `exercise_category` column) is not implemented
 yet; it is a natural follow-up.
 
-## Requirements
+### Requirements
 
 - Lua 5.4
 - [Lux](https://github.com/lumen-oss/lux) only if you want to use
   `lx test` / `lx run`. Running the server directly with `lua` needs no
   dependencies.
 
-## Running
+### Running
 
 From the project root:
 
@@ -126,30 +180,8 @@ DBML_LS_LOG=1 lua src/main.lua
 > `lx run` is fine for manual poking (the server tolerates leading blank
 > lines), but clients should launch `lua src/main.lua` directly.
 
-## Neovim
 
-Neovim does not know the `dbml` filetype by default, so register it and
-start the server for that filetype:
-
-```lua
-vim.filetype.add({ extension = { dbml = "dbml" } })
-
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "dbml",
-  callback = function(args)
-    vim.lsp.start({
-      name = "dbml-ls",
-      cmd = { "lua", "/absolute/path/to/dbml-ls/src/main.lua" },
-      root_dir = vim.fs.dirname(vim.api.nvim_buf_get_name(args.buf)),
-    })
-  end,
-})
-```
-
-If you use a completion plugin such as `nvim-cmp` or the built-in
-`vim.lsp.completion`, it will consume the server's completion items.
-
-## Testing
+### Testing
 
 ```sh
 lx test
@@ -164,53 +196,7 @@ The suite covers the JSON wrapper, lexer, parser, the `Endpoint` /
 go-to-definition, document symbols, diagnostics, RPC framing, server
 lifecycle, and a full stdio integration test of `src/main.lua`.
 
-## Layout
-
-```
-src/
-  main.lua              stdio entrypoint and read loop
-  dbml/
-    rpc.lua             Content-Length framing and JSON-RPC
-    json.lua            JSON helpers (array/object/null)
-    document.lua        text store and offset/position mapping
-    lexer.lua           DBML tokenizer
-    parser.lua          error-tolerant DBML parser
-    ref.lua             Endpoint / Reference model
-    analysis.lua        parse cache and errors
-    symbols.lua         symbol table and document symbols
-    resolve.lua         symbol resolution shared by hover and definition
-    diagnostics.lua     syntax and semantic diagnostics
-    completion.lua      completion contexts and items
-    hover.lua           hover contents
-    definition.lua      same-file go-to-definition
-    server.lua          LSP lifecycle, diagnostics, and request dispatch
-    log.lua             stderr logging
-  vendor/
-    dkjson.lua          vendored JSON implementation (MIT)
-spec/                   busted tests
-```
-
-## JSON dependency
-
-The server vendors [dkjson](https://dkolf.de/src/dkjson-lua.fsl/) 2.5 at
-`src/vendor/dkjson.lua` (MIT license). The wrapper in `src/dbml/json.lua`
-adds explicit empty-array and empty-object helpers, because Lua tables
-cannot otherwise distinguish `[]` from `{}`.
-
-## Notes and limitations
-
-- **Single file only.** The server parses the buffer sent by the client;
-  it does not scan the workspace for other `.dbml` files. Cross-file refs
-  and workspace-wide completion are not supported, which is why
-  unresolved refs are diagnostics warnings rather than errors.
-- **Table partials are not merged.** `~base` includes are recorded and
-  validated, but inherited columns are not added to the including table.
-  Diagnostics therefore skip column-resolution checks for tables with
-  partial includes.
-- DBML column types are free-form. The type list in completion is a set
-  of suggestions, not a validation list.
-- Index expressions, `checks` contents, and `records` sample data are
-  parsed/skipped but not semantically validated yet.
-- The parser is deliberately error-tolerant so completion keeps working
-  while a statement is half-typed.
-- Logs go to stderr only; stdout is reserved for the protocol.
+Source modules carry LuaCATS annotations for their public methods,
+internal helpers, AST nodes, and LSP payloads. `src/dbml/types.lua` holds
+the shared class definitions, so LuaLS provides parameter names, return
+types, and field completion while reviewing the code.
