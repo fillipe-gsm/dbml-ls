@@ -106,6 +106,7 @@ Not implemented yet:
 - Logs go to stderr only; stdout is reserved for the protocol.
 
 ## Development Details
+
 ### Diagnostics
 
 Diagnostics are pushed on `textDocument/didOpen` and `didChange`, and
@@ -157,7 +158,7 @@ Resolving an enum value used in a `default:` string (for example
 `default: 'barbell'` on an `exercise_category` column) is not implemented
 yet; it is a natural follow-up.
 
-## Rename
+### Rename
 
 `textDocument/prepareRename` and `textDocument/rename` are implemented
 for the current buffer. Renaming a symbol updates its declaration and
