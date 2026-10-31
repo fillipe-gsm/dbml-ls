@@ -37,6 +37,24 @@ function M.hover_at(text_with_cursor)
   return M.hover(text, line, character)
 end
 
+function M.prepare_rename_at(text_with_cursor)
+  local text, line, character = M.cursor(text_with_cursor)
+  local analyzed, document = M.analyze(text)
+  return require("dbml.rename").prepare(analyzed, document, {
+    line = line,
+    character = character,
+  }), document, text
+end
+
+function M.rename_at(text_with_cursor, new_name)
+  local text, line, character = M.cursor(text_with_cursor)
+  local analyzed, document = M.analyze(text)
+  return require("dbml.rename").rename(analyzed, document, {
+    line = line,
+    character = character,
+  }, new_name), document, text
+end
+
 function M.definition_at(text_with_cursor)
   local text, line, character = M.cursor(text_with_cursor)
   local analyzed, document = M.analyze(text)

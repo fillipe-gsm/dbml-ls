@@ -7,6 +7,7 @@ local analysis = require("dbml.analysis")
 local completion = require("dbml.completion")
 local hover = require("dbml.hover")
 local definition = require("dbml.definition")
+local rename_engine = require("dbml.rename")
 local symbols = require("dbml.symbols")
 local diagnostics_engine = require("dbml.diagnostics")
 
@@ -77,6 +78,8 @@ function Server.new(options)
     ["textDocument/completion"] = Server.handle_completion,
     ["textDocument/hover"] = Server.handle_hover,
     ["textDocument/definition"] = Server.handle_definition,
+    ["textDocument/prepareRename"] = Server.handle_prepare_rename,
+    ["textDocument/rename"] = Server.handle_rename,
     ["textDocument/documentSymbol"] = Server.handle_document_symbol,
 
     ["workspace/didChangeConfiguration"] = Server.handle_noop,
@@ -193,6 +196,9 @@ function Server:handle_initialize(params, message)
       },
       hoverProvider = true,
       definitionProvider = true,
+      renameProvider = {
+        prepareProvider = true,
+      },
       documentSymbolProvider = true,
     },
     serverInfo = {
@@ -336,6 +342,47 @@ function Server:handle_definition(params, message)
     analyzed,
     document,
     params.position or { line = 0, character = 0 }
+  )
+  self:respond(message.id, result or json.null)
+end
+
+---@param params table
+---@param message table
+---@param params table
+---@param message table
+function Server:handle_prepare_rename(params, message)
+  ---@cast self dbml.Server
+  local document = self:document_for(params)
+  if not document then
+    self:respond(message.id, json.null)
+    return
+  end
+
+  local analyzed = analysis.get(document)
+  local result = rename_engine.prepare(
+    analyzed,
+    document,
+    params.position or { line = 0, character = 0 }
+  )
+  self:respond(message.id, result or json.null)
+end
+
+---@param params table
+---@param message table
+function Server:handle_rename(params, message)
+  ---@cast self dbml.Server
+  local document = self:document_for(params)
+  if not document then
+    self:respond(message.id, json.null)
+    return
+  end
+
+  local analyzed = analysis.get(document)
+  local result = rename_engine.rename(
+    analyzed,
+    document,
+    params.position or { line = 0, character = 0 },
+    params.newName
   )
   self:respond(message.id, result or json.null)
 end

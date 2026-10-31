@@ -67,6 +67,7 @@ describe("server", function()
     assert.equal(1, response.result.capabilities.textDocumentSync.change)
     assert.is_true(response.result.capabilities.hoverProvider)
     assert.is_true(response.result.capabilities.definitionProvider)
+    assert.is_true(response.result.capabilities.renameProvider.prepareProvider)
     assert.is_true(response.result.capabilities.documentSymbolProvider)
     assert.equal("dbml-ls", response.result.serverInfo.name)
     assert.is_true(server.initialized)
@@ -310,6 +311,61 @@ describe("server", function()
       method = "textDocument/definition",
       params = { textDocument = { uri = "file:///missing.dbml" } },
     })
+    assert.equal(json.null, last(sent).result)
+  end)
+
+  it("prepares and applies a rename", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 10,
+      method = "textDocument/prepareRename",
+      params = {
+        textDocument = { uri = URI },
+        position = { line = 1, character = 3 },
+      },
+    })
+
+    assert.equal("id", last(sent).result.placeholder)
+    assert.equal(2, last(sent).result.range.start.character)
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 11,
+      method = "textDocument/rename",
+      params = {
+        textDocument = { uri = URI },
+        position = { line = 1, character = 3 },
+        newName = "uid",
+      },
+    })
+
+    local edits = last(sent).result.changes[URI]
+    assert.equal(1, #edits)
+    assert.equal("uid", edits[1].newText)
+    assert.equal(2, edits[1].range.start.character)
+    assert.equal(4, edits[1].range["end"].character)
+  end)
+
+  it("returns null for an invalid rename", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 12,
+      method = "textDocument/rename",
+      params = {
+        textDocument = { uri = URI },
+        position = { line = 1, character = 3 },
+        newName = "bad\nname",
+      },
+    })
+
     assert.equal(json.null, last(sent).result)
   end)
 

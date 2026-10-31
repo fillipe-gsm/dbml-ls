@@ -95,6 +95,7 @@
 ---@class dbml.TableInclude
 ---@field name string
 ---@field range dbml.Range
+---@field name_part_range? dbml.Range
 
 ---@class dbml.Table
 ---@field kind string
@@ -103,6 +104,7 @@
 ---@field full_name string
 ---@field schema? string
 ---@field name_range dbml.Range
+---@field name_part_range? dbml.Range
 ---@field alias? string
 ---@field alias_range? dbml.Range
 ---@field columns dbml.Column[]
@@ -134,6 +136,7 @@
 ---@field full_name string
 ---@field schema? string
 ---@field name_range dbml.Range
+---@field name_part_range? dbml.Range
 ---@field values dbml.EnumValue[]
 ---@field settings? dbml.Setting[]
 ---@field settings_range? dbml.Range
@@ -147,6 +150,7 @@
 ---@class dbml.TableGroupMember
 ---@field name string
 ---@field range dbml.Range
+---@field name_part_range? dbml.Range
 
 ---@class dbml.TableGroup
 ---@field kind string
@@ -226,6 +230,7 @@
 ---@field name string
 ---@field range dbml.Range
 ---@field table_range dbml.Range
+---@field table_part_range? dbml.Range
 ---@field column_range? dbml.Range
 
 ---@class dbml.EndpointInit
@@ -238,6 +243,7 @@
 ---@field name? string
 ---@field range dbml.Range
 ---@field table_range dbml.Range
+---@field table_part_range? dbml.Range
 ---@field column_range? dbml.Range
 
 ---@class dbml.Reference
@@ -314,6 +320,24 @@
 ---@class dbml.Hover
 ---@field contents { kind: string, value: string }
 ---@field range dbml.LspRange
+
+---@class dbml.RenameTarget
+---@field kind string
+---@field table? dbml.Table
+---@field column? dbml.Column
+---@field enum? dbml.Enum
+---@field value? dbml.EnumValue
+---@field group? dbml.TableGroup
+---@field project? dbml.Project
+
+---@class dbml.RenameEdit
+---@field start integer
+---@field stop integer
+---@field text string
+
+---@class dbml.PrepareRenameResult
+---@field range dbml.LspRange
+---@field placeholder string
 
 ---@class dbml.DocumentSymbol
 ---@field name string

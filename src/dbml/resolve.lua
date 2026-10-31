@@ -59,7 +59,12 @@ local function resolve_endpoint(analysis, endpoint, offset)
   if contains(endpoint.table_range, offset) then
     local table = symbols.find_table(analysis.symbols, endpoint.table)
     if table then
-      return { kind = "table", table = table, range = endpoint.table_range }
+      return {
+        kind = table.alias == endpoint.table and not endpoint.schema and "alias"
+          or "table",
+        table = table,
+        range = endpoint.table_part_range or endpoint.table_range,
+      }
     end
   end
 
@@ -83,8 +88,11 @@ end
 ---@return dbml.ResolvedSymbol?
 function M.at(analysis, offset)
   for _, table in ipairs(analysis.ast.tables) do
-    if contains(table.name_range, offset) or contains(table.alias_range, offset) then
-      return { kind = "table", table = table, range = table.alias_range or table.name_range }
+    if contains(table.name_range, offset) then
+      return { kind = "table", table = table, range = table.name_range }
+    end
+    if contains(table.alias_range, offset) then
+      return { kind = "alias", table = table, range = table.alias_range }
     end
     if contains(table.settings_range, offset) then
       return { kind = "table", table = table, range = table.name_range }
@@ -94,7 +102,11 @@ function M.at(analysis, offset)
       if contains(include.range, offset) then
         local partial = symbols.find_table(analysis.symbols, include.name)
         if partial and partial.partial then
-          return { kind = "table", table = partial, range = include.range }
+          return {
+            kind = partial.alias == include.name and "alias" or "table",
+            table = partial,
+            range = include.name_part_range or include.range,
+          }
         end
       end
     end
@@ -179,7 +191,11 @@ function M.at(analysis, offset)
       if contains(member.range, offset) then
         local table = symbols.find_table(analysis.symbols, member.name)
         if table then
-          return { kind = "table", table = table, range = member.range }
+          return {
+            kind = table.alias == member.name and "alias" or "table",
+            table = table,
+            range = member.name_part_range or member.range,
+          }
         end
       end
     end

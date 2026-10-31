@@ -100,6 +100,7 @@ function Endpoint.from_table_column(table, column)
     name = full_name .. "." .. column.name,
     range = { start = table.name_range.start, stop = column.name_range.stop },
     table_range = table.name_range,
+    table_part_range = table.name_part_range or table.name_range,
     column_range = column.name_range,
   })
 end

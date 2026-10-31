@@ -175,7 +175,7 @@ end
 ---@param analysis dbml.Analysis
 ---@return string?
 local function markdown_for(symbol, analysis)
-  if symbol.kind == "table" then
+  if symbol.kind == "table" or symbol.kind == "alias" then
     local table = symbol.table
     return table and table_markdown(table)
   elseif symbol.kind == "column" then

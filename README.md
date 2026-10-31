@@ -58,6 +58,10 @@ Implemented:
 - **Go-to-definition** for tables, columns, aliases, enum types, enum
   values, ref endpoints, inline refs, composite ref columns, index
   columns, table group members, and table partial includes.
+- **Rename** for tables, aliases, columns, enums, enum values, table
+  partials, table groups, and projects, including refs, inline refs,
+  composite refs, indexes, group members, partial includes, enum type
+  usages, and enum defaults.
 - **Diagnostics** for syntax errors, duplicate definitions, unknown index
   columns, unresolved refs, unknown table group members, and unknown
   table partial includes.
@@ -66,7 +70,7 @@ Implemented:
 - UTF-8 and UTF-16 position encoding negotiation.
 - Snippet completion when the client supports it.
 - A structured `dbml.Endpoint` / `dbml.Reference` model shared by refs,
-  diagnostics, and future go-to-definition support.
+  diagnostics, hover, definition, and rename.
 
 The parser also understands quoted multi-word and schema-qualified types,
 schema-qualified enums, index expressions, `checks` and `records` blocks,
@@ -76,7 +80,7 @@ modern DBML does not produce false syntax errors.
 Not implemented yet:
 
 - Find-references
-- Rename and formatting
+- Formatting
 - Workspace/multi-file indexing (single-buffer only for now)
 - Syntax highlighting (belongs in a Neovim syntax or tree-sitter
   plugin, not in the language server)
@@ -153,6 +157,32 @@ Resolving an enum value used in a `default:` string (for example
 `default: 'barbell'` on an `exercise_category` column) is not implemented
 yet; it is a natural follow-up.
 
+## Rename
+
+`textDocument/prepareRename` and `textDocument/rename` are implemented
+for the current buffer. Renaming a symbol updates its declaration and
+the references the server knows about:
+
+- table names, including refs, inline refs, composite refs, group
+  members, and `TablePartial` includes
+- table aliases and their refs/group members
+- column names, including refs, inline refs, composite refs, and indexes
+- enum names and schema-qualified/bare type usages
+- enum values and matching `default: 'value'` strings
+- table groups and projects (declaration only)
+
+`prepareRename` refuses positions that are not actual symbol names, such
+as table/column settings or a ref operator.
+
+Names that need it are double-quoted automatically (spaces, reserved
+words, special characters). Renames that would collide with an existing
+symbol in the same scope are rejected. Records sample data and
+expression indexes are not updated yet, and cross-file rename remains
+out of scope.
+
+In Neovim, the existing `grn` mapping (`vim.lsp.buf.rename`) already uses
+this; no config change is needed.
+
 ### Requirements
 
 - Lua 5.4
@@ -193,8 +223,8 @@ sets up the `src/` module path.
 
 The suite covers the JSON wrapper, lexer, parser, the `Endpoint` /
 `Reference` model, document/position mapping, completion, hover,
-go-to-definition, document symbols, diagnostics, RPC framing, server
-lifecycle, and a full stdio integration test of `src/main.lua`.
+go-to-definition, rename, document symbols, diagnostics, RPC framing,
+server lifecycle, and a full stdio integration test of `src/main.lua`.
 
 Source modules carry LuaCATS annotations for their public methods,
 internal helpers, AST nodes, and LSP payloads. `src/dbml/types.lua` holds

@@ -720,6 +720,8 @@ function Parser:parse_table(partial)
     start = keyword.start,
   }
 
+  table.name_part_range = qualified.ranges[#qualified.ranges]
+
   if #qualified.parts > 1 then
     table.name = qualified.parts[#qualified.parts]
     table.schema = concat(qualified.parts, ".", 1, #qualified.parts - 1)
@@ -766,6 +768,7 @@ function Parser:parse_table(partial)
         table.includes[#table.includes + 1] = {
           name = include.name,
           range = include.range,
+          name_part_range = include.ranges[#include.ranges],
         }
       else
         self:error(token, "expected a table partial name")
@@ -814,6 +817,8 @@ function Parser:parse_enum()
     values = {},
     start = keyword.start,
   }
+
+  enum.name_part_range = qualified.ranges[#qualified.ranges]
 
   if #qualified.parts > 1 then
     enum.name = qualified.parts[#qualified.parts]
@@ -931,6 +936,7 @@ function Parser:parse_endpoint()
         stop = close and close.stop or self:last_stop(),
       },
       table_range = qualified.range,
+      table_part_range = ranges[#ranges],
       column_range = {
         start = open.start,
         stop = close and close.stop or self:last_stop(),
@@ -960,6 +966,7 @@ function Parser:parse_endpoint()
     name = qualified.name,
     range = qualified.range,
     table_range = table_range,
+    table_part_range = table_range,
     column_range = column_range,
   })
 end
@@ -1130,6 +1137,7 @@ function Parser:parse_table_group()
         group.members[#group.members + 1] = {
           name = member.name,
           range = member.range,
+          name_part_range = member.ranges[#member.ranges],
         }
       else
         self:error(token, "expected a table name")

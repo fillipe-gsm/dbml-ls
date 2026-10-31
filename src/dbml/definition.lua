@@ -25,7 +25,7 @@ end
 ---@param analysis dbml.Analysis
 ---@return dbml.Range?
 local function target_range(symbol, analysis)
-  if symbol.kind == "table" then
+  if symbol.kind == "table" or symbol.kind == "alias" then
     local table = symbol.table
     return table and table.name_range
   elseif symbol.kind == "column" then
