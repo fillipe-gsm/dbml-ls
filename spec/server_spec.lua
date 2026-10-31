@@ -66,6 +66,7 @@ describe("server", function()
     assert.equal("utf-8", response.result.capabilities.positionEncoding)
     assert.equal(1, response.result.capabilities.textDocumentSync.change)
     assert.is_true(response.result.capabilities.hoverProvider)
+    assert.is_true(response.result.capabilities.definitionProvider)
     assert.is_true(response.result.capabilities.documentSymbolProvider)
     assert.equal("dbml-ls", response.result.serverInfo.name)
     assert.is_true(server.initialized)
@@ -256,6 +257,58 @@ describe("server", function()
         textDocument = { uri = URI },
         position = { line = 3, character = 0 },
       },
+    })
+    assert.equal(json.null, last(sent).result)
+  end)
+
+  it("returns definition locations", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 7,
+      method = "textDocument/definition",
+      params = {
+        textDocument = { uri = URI },
+        position = { line = 1, character = 3 },
+      },
+    })
+
+    local result = last(sent).result
+    assert.equal(URI, result.uri)
+    assert.equal(1, result.range.start.line)
+    assert.equal(2, result.range.start.character)
+    assert.equal(4, result.range["end"].character)
+  end)
+
+  it("returns null for a definition miss", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id integer\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 8,
+      method = "textDocument/definition",
+      params = {
+        textDocument = { uri = URI },
+        position = { line = 3, character = 0 },
+      },
+    })
+
+    assert.equal(json.null, last(sent).result)
+  end)
+
+  it("returns null for a definition request without a document", function()
+    local server, sent = new_server()
+    initialize(server)
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 9,
+      method = "textDocument/definition",
+      params = { textDocument = { uri = "file:///missing.dbml" } },
     })
     assert.equal(json.null, last(sent).result)
   end)

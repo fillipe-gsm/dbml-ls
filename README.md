@@ -18,6 +18,9 @@ Implemented:
   and projects.
 - **Document symbols** for tables, columns, enums, enum values, refs,
   table groups, and projects.
+- **Go-to-definition** for tables, columns, aliases, enum types, enum
+  values, ref endpoints, inline refs, composite ref columns, index
+  columns, table group members, and table partial includes.
 - **Diagnostics** for syntax errors, duplicate definitions, unknown index
   columns, unresolved refs, unknown table group members, and unknown
   table partial includes.
@@ -35,7 +38,7 @@ modern DBML does not produce false syntax errors.
 
 Not implemented yet:
 
-- Go-to-definition and find-references
+- Find-references
 - Rename and formatting
 - Workspace/multi-file indexing (single-buffer only for now)
 - Syntax highlighting (belongs in a Neovim syntax or tree-sitter
@@ -69,6 +72,32 @@ Tables that include a `TablePartial` (`~base`) inherit columns that the
 parser does not merge yet; unresolved-column checks are skipped for those
 tables to avoid false positives. Explicit duplicate columns are still
 reported.
+
+## Go to definition
+
+`textDocument/definition` resolves the symbol under the cursor within the
+current buffer:
+
+- table names, aliases, and `TablePartial` declarations
+- column declarations and usages
+- enum names and enum values
+- column types that name an enum (including schema-qualified enums)
+- top-level ref endpoints and inline `[ref: ...]` targets
+- individual columns in composite refs like `a.(x, y) > b.(x, y)`
+- index columns and table group members
+- table partial includes (`~base`)
+
+Definitions return the declaration's name range, so the jump highlights
+the useful token rather than the whole block. Cross-file definitions are
+not supported; unresolved targets return `null`, matching the single-file
+scope.
+
+In Neovim, a buffer-local `gd` mapping is added when the server attaches.
+You can also call `vim.lsp.buf.definition()` directly.
+
+Resolving an enum value used in a `default:` string (for example
+`default: 'barbell'` on an `exercise_category` column) is not implemented
+yet; it is a natural follow-up.
 
 ## Requirements
 
@@ -132,8 +161,8 @@ sets up the `src/` module path.
 
 The suite covers the JSON wrapper, lexer, parser, the `Endpoint` /
 `Reference` model, document/position mapping, completion, hover,
-document symbols, diagnostics, RPC framing, server lifecycle, and a full
-stdio integration test of `src/main.lua`.
+go-to-definition, document symbols, diagnostics, RPC framing, server
+lifecycle, and a full stdio integration test of `src/main.lua`.
 
 ## Layout
 
@@ -149,9 +178,11 @@ src/
     ref.lua             Endpoint / Reference model
     analysis.lua        parse cache and errors
     symbols.lua         symbol table and document symbols
+    resolve.lua         symbol resolution shared by hover and definition
     diagnostics.lua     syntax and semantic diagnostics
     completion.lua      completion contexts and items
     hover.lua           hover contents
+    definition.lua      same-file go-to-definition
     server.lua          LSP lifecycle, diagnostics, and request dispatch
     log.lua             stderr logging
   vendor/

@@ -6,6 +6,7 @@ local Document = require("dbml.document")
 local analysis = require("dbml.analysis")
 local completion = require("dbml.completion")
 local hover = require("dbml.hover")
+local definition = require("dbml.definition")
 local symbols = require("dbml.symbols")
 local diagnostics_engine = require("dbml.diagnostics")
 
@@ -49,6 +50,7 @@ function Server.new(options)
 
     ["textDocument/completion"] = Server.handle_completion,
     ["textDocument/hover"] = Server.handle_hover,
+    ["textDocument/definition"] = Server.handle_definition,
     ["textDocument/documentSymbol"] = Server.handle_document_symbol,
 
     ["workspace/didChangeConfiguration"] = Server.handle_noop,
@@ -148,6 +150,7 @@ function Server:handle_initialize(params, message)
         resolveProvider = false,
       },
       hoverProvider = true,
+      definitionProvider = true,
       documentSymbolProvider = true,
     },
     serverInfo = {
@@ -259,6 +262,21 @@ function Server:handle_hover(params, message)
   end
   local analyzed = analysis.get(document)
   local result = hover.hover(analyzed, document, params.position or { line = 0, character = 0 })
+  self:respond(message.id, result or json.null)
+end
+
+function Server:handle_definition(params, message)
+  local document = self:document_for(params)
+  if not document then
+    self:respond(message.id, json.null)
+    return
+  end
+  local analyzed = analysis.get(document)
+  local result = definition.definition(
+    analyzed,
+    document,
+    params.position or { line = 0, character = 0 }
+  )
   self:respond(message.id, result or json.null)
 end
 

@@ -37,6 +37,15 @@ function M.hover_at(text_with_cursor)
   return M.hover(text, line, character)
 end
 
+function M.definition_at(text_with_cursor)
+  local text, line, character = M.cursor(text_with_cursor)
+  local analyzed, document = M.analyze(text)
+  return require("dbml.definition").definition(analyzed, document, {
+    line = line,
+    character = character,
+  })
+end
+
 function M.symbols(text)
   local analyzed, document = M.analyze(text)
   return require("dbml.symbols").document_symbols(analyzed.ast, document)

@@ -1,14 +1,11 @@
 -- Hover information for tables, columns, enums, and refs.
 
+local resolve = require("dbml.resolve")
 local symbols = require("dbml.symbols")
 
 local M = {}
 
 local concat = table.concat
-
-local function contains(range, offset)
-  return range ~= nil and range.start <= offset and offset <= range.stop
-end
 
 local function lsp_range(document, range)
   return {
@@ -152,153 +149,6 @@ local function project_markdown(project)
   return concat(lines, "\n")
 end
 
-local function local_column(table, name)
-  for _, column in ipairs(table.columns) do
-    if column.name == name then
-      return column
-    end
-  end
-  return nil
-end
-
-local function find_symbol(analysis, offset)
-  for _, table in ipairs(analysis.ast.tables) do
-    if contains(table.name_range, offset) or contains(table.alias_range, offset) then
-      return { kind = "table", table = table, range = table.alias_range or table.name_range }
-    end
-    if contains(table.settings_range, offset) then
-      return { kind = "table", table = table, range = table.name_range }
-    end
-
-    for _, column in ipairs(table.columns) do
-      if contains(column.name_range, offset) then
-        return { kind = "column", table = table, column = column, range = column.name_range }
-      end
-      if contains(column.type_range, offset) then
-        return { kind = "type", table = table, column = column, range = column.type_range }
-      end
-      if contains(column.settings_range, offset) then
-        return { kind = "column", table = table, column = column, range = column.name_range }
-      end
-    end
-
-    for _, index in ipairs(table.indexes or {}) do
-      for _, column in ipairs(index.columns) do
-        if contains(column.range, offset) then
-          local resolved = local_column(table, column.name)
-          if resolved then
-            return { kind = "column", table = table, column = resolved, range = column.range }
-          end
-        end
-      end
-      if contains(index.settings_range, offset) then
-        return { kind = "index", table = table, index = index, range = index.range }
-      end
-    end
-
-    if table.note and contains(table.note.range, offset) then
-      return { kind = "table", table = table, range = table.name_range }
-    end
-  end
-
-  for _, enum in ipairs(analysis.ast.enums) do
-    if contains(enum.name_range, offset) or contains(enum.settings_range, offset) then
-      return { kind = "enum", enum = enum, range = enum.name_range }
-    end
-    for _, value in ipairs(enum.values) do
-      if contains(value.name_range, offset) or contains(value.settings_range, offset) then
-        return { kind = "enum", enum = enum, range = value.name_range }
-      end
-    end
-    if enum.note and contains(enum.note.range, offset) then
-      return { kind = "enum", enum = enum, range = enum.name_range }
-    end
-  end
-
-  for _, ref in ipairs(analysis.ast.refs) do
-    for _, expression in ipairs(ref.expressions) do
-      if expression.from.columns then
-        for _, column in ipairs(expression.from.columns) do
-          if contains(column.range, offset) then
-            local table = symbols.find_table(analysis.symbols, expression.from.table)
-            local resolved = table and local_column(table, column.name)
-            if resolved then
-              return { kind = "column", table = table, column = resolved, range = column.range }
-            end
-          end
-        end
-      end
-      if expression.to.columns then
-        for _, column in ipairs(expression.to.columns) do
-          if contains(column.range, offset) then
-            local table = symbols.find_table(analysis.symbols, expression.to.table)
-            local resolved = table and local_column(table, column.name)
-            if resolved then
-              return { kind = "column", table = table, column = resolved, range = column.range }
-            end
-          end
-        end
-      end
-      if contains(expression.from.column_range, offset) then
-        local table = symbols.find_table(analysis.symbols, expression.from.table)
-        local column = table and local_column(table, expression.from.column)
-        if column then
-          return { kind = "column", table = table, column = column, range = expression.from.column_range }
-        end
-      end
-      if contains(expression.from.table_range, offset) then
-        local table = symbols.find_table(analysis.symbols, expression.from.table)
-        if table then
-          return { kind = "table", table = table, range = expression.from.table_range }
-        end
-      end
-      if contains(expression.to.column_range, offset) then
-        local table = symbols.find_table(analysis.symbols, expression.to.table)
-        local column = table and local_column(table, expression.to.column)
-        if column then
-          return { kind = "column", table = table, column = column, range = expression.to.column_range }
-        end
-      end
-      if contains(expression.to.table_range, offset) then
-        local table = symbols.find_table(analysis.symbols, expression.to.table)
-        if table then
-          return { kind = "table", table = table, range = expression.to.table_range }
-        end
-      end
-      if contains(expression.range, offset) then
-        return { kind = "ref", ref = ref, range = expression.range }
-      end
-    end
-  end
-
-  for _, group in ipairs(analysis.ast.groups) do
-    if contains(group.name_range, offset) or contains(group.settings_range, offset) then
-      return { kind = "group", group = group, range = group.name_range }
-    end
-    for _, member in ipairs(group.members) do
-      if contains(member.range, offset) then
-        local table = symbols.find_table(analysis.symbols, member.name)
-        if table then
-          return { kind = "table", table = table, range = member.range }
-        end
-      end
-    end
-  end
-
-  for _, project in ipairs(analysis.ast.projects) do
-    if contains(project.name_range, offset) then
-      return { kind = "project", project = project, range = project.name_range }
-    end
-    for _, setting in ipairs(project.settings) do
-      if contains(setting.key_range, offset) or contains(setting.value_range, offset) then
-        return { kind = "project", project = project, range = setting.key_range }
-      end
-    end
-  end
-
-  return nil
-end
-
 local function markdown_for(symbol, analysis)
   if symbol.kind == "table" then
     return table_markdown(symbol.table)
@@ -311,6 +161,8 @@ local function markdown_for(symbol, analysis)
     end
     return "Type `" .. (symbol.column.type or "unknown") .. "`"
   elseif symbol.kind == "enum" then
+    return enum_markdown(symbol.enum)
+  elseif symbol.kind == "enum_value" then
     return enum_markdown(symbol.enum)
   elseif symbol.kind == "ref" then
     return ref_markdown(symbol.ref)
@@ -326,7 +178,7 @@ end
 
 function M.hover(analysis, document, position)
   local offset = document:offset_at(position)
-  local symbol = find_symbol(analysis, offset)
+  local symbol = resolve.at(analysis, offset)
   if not symbol then
     return nil
   end
