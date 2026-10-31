@@ -6,10 +6,14 @@
 
 local M = {}
 
+---@param byte integer?
+---@return boolean
 local function is_digit(byte)
-  return byte and byte >= 48 and byte <= 57
+  return byte ~= nil and byte >= 48 and byte <= 57
 end
 
+---@param byte integer?
+---@return boolean
 local function is_word_start(byte)
   if not byte then
     return false
@@ -20,6 +24,8 @@ local function is_word_start(byte)
     or byte >= 128 -- UTF-8 identifier bytes
 end
 
+---@param byte integer?
+---@return boolean
 local function is_word_byte(byte)
   return is_word_start(byte) or is_digit(byte)
 end
@@ -27,6 +33,9 @@ end
 --- Tokenize `text`.
 --
 -- Returns `tokens, errors`.  A trailing EOF token is always present.
+---@param text string
+---@return dbml.Token[] tokens
+---@return dbml.Error[] errors
 function M.tokenize(text)
   local tokens = {}
   local errors = {}

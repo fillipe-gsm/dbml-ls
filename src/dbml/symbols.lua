@@ -2,16 +2,23 @@
 
 local M = {}
 
+---@param value string?
+---@return string?
 local function lower(value)
   return value and value:lower() or nil
 end
 
+---@param map table<string, any>
+---@param key string?
+---@param value any
 local function put_first(map, key, value)
   if key and map[key] == nil then
     map[key] = value
   end
 end
 
+---@param ast dbml.Ast
+---@return dbml.SymbolTable
 function M.build(ast)
   local symbols = {
     tables = {},
@@ -50,6 +57,9 @@ function M.build(ast)
   return symbols
 end
 
+---@param map table<string, any>
+---@param name string?
+---@return any
 local function case_insensitive(map, name)
   if not name then
     return nil
@@ -63,6 +73,9 @@ local function case_insensitive(map, name)
   return nil
 end
 
+---@param symbols dbml.SymbolTable
+---@param name string?
+---@return dbml.Table?
 function M.find_table(symbols, name)
   if not name then
     return nil
@@ -70,6 +83,9 @@ function M.find_table(symbols, name)
   return symbols.tables[name] or symbols.aliases[name] or case_insensitive(symbols.tables, name)
 end
 
+---@param symbols dbml.SymbolTable
+---@param name string?
+---@return dbml.Enum?
 function M.find_enum(symbols, name)
   if not name then
     return nil
@@ -77,6 +93,9 @@ function M.find_enum(symbols, name)
   return symbols.enums[name] or case_insensitive(symbols.enums, name)
 end
 
+---@param symbols dbml.SymbolTable
+---@param name string?
+---@return table<string, dbml.Column>?
 function M.columns_for(symbols, name)
   if not name then
     return nil
@@ -84,6 +103,10 @@ function M.columns_for(symbols, name)
   return symbols.columns[name] or case_insensitive(symbols.columns, name)
 end
 
+---@param symbols dbml.SymbolTable
+---@param table_name string?
+---@param column_name string?
+---@return dbml.Column?
 function M.find_column(symbols, table_name, column_name)
   local columns = M.columns_for(symbols, table_name)
   if not columns or not column_name then
@@ -92,6 +115,9 @@ function M.find_column(symbols, table_name, column_name)
   return columns[column_name] or case_insensitive(columns, column_name)
 end
 
+---@param document dbml.Document
+---@param range dbml.Range
+---@return dbml.LspRange
 local function lsp_range(document, range)
   return {
     start = document:position_at(range.start),
@@ -99,11 +125,15 @@ local function lsp_range(document, range)
   }
 end
 
+---@param ast dbml.Ast
+---@param document dbml.Document
+---@return dbml.DocumentSymbol[]
 function M.document_symbols(ast, document)
   local result = {}
 
   for _, statement in ipairs(ast.statements) do
     if statement.kind == "table" then
+      ---@cast statement dbml.Table
       local children = {}
       for _, column in ipairs(statement.columns) do
         children[#children + 1] = {
@@ -127,6 +157,7 @@ function M.document_symbols(ast, document)
       result[#result + 1] = symbol
 
     elseif statement.kind == "enum" then
+      ---@cast statement dbml.Enum
       local children = {}
       for _, value in ipairs(statement.values) do
         children[#children + 1] = {
@@ -149,6 +180,7 @@ function M.document_symbols(ast, document)
       result[#result + 1] = symbol
 
     elseif statement.kind == "ref" then
+      ---@cast statement dbml.RefStatement
       local expression = statement.expressions[1]
       local name
       if expression then
@@ -171,6 +203,7 @@ function M.document_symbols(ast, document)
       }
 
     elseif statement.kind == "table_group" then
+      ---@cast statement dbml.TableGroup
       result[#result + 1] = {
         name = statement.name,
         kind = 11, -- Interface
@@ -180,6 +213,7 @@ function M.document_symbols(ast, document)
       }
 
     elseif statement.kind == "project" then
+      ---@cast statement dbml.Project
       result[#result + 1] = {
         name = statement.name,
         kind = 2, -- Module

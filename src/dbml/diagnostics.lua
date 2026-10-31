@@ -24,6 +24,9 @@ M.severity = {
 local ERROR = M.severity.ERROR
 local WARNING = M.severity.WARNING
 
+---@param document dbml.Document
+---@param range dbml.Range
+---@return dbml.Range
 local function normalize_range(document, range)
   local length = #document.text
   local start = math.max(0, math.min(length, range.start or 0))
@@ -39,6 +42,9 @@ local function normalize_range(document, range)
   return { start = start, stop = stop }
 end
 
+---@param document dbml.Document
+---@param range dbml.Range
+---@return dbml.LspRange
 local function lsp_range(document, range)
   local normalized = normalize_range(document, range)
   return {
@@ -47,10 +53,20 @@ local function lsp_range(document, range)
   }
 end
 
+---@param document dbml.Document
+---@param offset integer
+---@return integer
 local function line_number(document, offset)
   return document:position_at(offset).line + 1
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param document dbml.Document
+---@param range dbml.Range?
+---@param severity integer
+---@param code string
+---@param message string
+---@param related_entries dbml.RelatedEntry[]?
 local function add(items, document, range, severity, code, message, related_entries)
   if not range then
     return
@@ -86,6 +102,8 @@ local function add(items, document, range, severity, code, message, related_entr
   }
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@return dbml.Diagnostic[]
 local function finish(items)
   table.sort(items, function(a, b)
     if a.start ~= b.start then
@@ -108,10 +126,14 @@ local function finish(items)
   return result
 end
 
+---@param table dbml.Table
+---@return boolean
 local function has_includes(table)
   return table.includes ~= nil and #table.includes > 0
 end
 
+---@param endpoint dbml.Endpoint
+---@return string
 local function endpoint_table_name(endpoint)
   if endpoint.schema and endpoint.schema ~= "" then
     return endpoint.schema .. "." .. endpoint.table
@@ -119,20 +141,31 @@ local function endpoint_table_name(endpoint)
   return endpoint.table
 end
 
+---@param symbol_table dbml.SymbolTable
+---@param endpoint dbml.Endpoint
+---@return dbml.Table?
 local function find_endpoint_table(symbol_table, endpoint)
   return symbols.find_table(symbol_table, endpoint_table_name(endpoint))
     or symbols.find_table(symbol_table, endpoint.table)
 end
 
-local function first_definition(table, document, message)
+---@param node { name_range: dbml.Range }
+---@param document dbml.Document
+---@param message string?
+---@return dbml.RelatedEntry[]
+local function first_definition(node, document, message)
+  local range = node.name_range
   return {
     {
-      range = table.name_range,
-      message = message or ("First definition on line " .. line_number(document, table.name_range.start)),
+      range = range,
+      message = message or ("First definition on line " .. line_number(document, range.start)),
     },
   }
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_syntax(items, analysis, document)
   for _, error in ipairs(analysis.errors or {}) do
     add(
@@ -146,7 +179,11 @@ local function add_syntax(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_tables(items, analysis, document)
+  ---@type table<string, dbml.Table?>
   local seen = {}
   for _, table in ipairs(analysis.ast.tables) do
     local key = (table.partial and "partial:" or "table:") .. table.full_name
@@ -173,7 +210,11 @@ local function add_duplicate_tables(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_enums(items, analysis, document)
+  ---@type table<string, dbml.Enum?>
   local seen = {}
   for _, enum in ipairs(analysis.ast.enums) do
     local key = enum.full_name or enum.name
@@ -198,8 +239,12 @@ local function add_duplicate_enums(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_columns(items, analysis, document)
   for _, table in ipairs(analysis.ast.tables) do
+    ---@type table<string, dbml.Column?>
     local seen = {}
     for _, column in ipairs(table.columns) do
       local first = seen[column.name]
@@ -230,8 +275,12 @@ local function add_duplicate_columns(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_enum_values(items, analysis, document)
   for _, enum in ipairs(analysis.ast.enums) do
+    ---@type table<string, dbml.EnumValue?>
     local seen = {}
     for _, value in ipairs(enum.values) do
       local first = seen[value.name]
@@ -262,27 +311,33 @@ local function add_duplicate_enum_values(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_aliases(items, analysis, document)
+  ---@type table<string, dbml.Table?>
   local seen = {}
   for _, table in ipairs(analysis.ast.tables) do
     if table.alias then
       local first = seen[table.alias]
-      if first then
+      local current_range = table.alias_range
+      local first_range = first and first.alias_range or nil
+      if first and current_range and first_range then
         add(
           items,
           document,
-          table.alias_range,
+          current_range,
           ERROR,
           "duplicate-alias",
           string.format(
             "Duplicate alias '%s' (first used on line %d)",
             table.alias,
-            line_number(document, first.alias_range.start)
+            line_number(document, first_range.start)
           ),
           {
             {
-              range = first.alias_range,
-              message = "First use on line " .. line_number(document, first.alias_range.start),
+              range = first_range,
+              message = "First use on line " .. line_number(document, first_range.start),
             },
           }
         )
@@ -293,27 +348,33 @@ local function add_duplicate_aliases(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_duplicate_ref_names(items, analysis, document)
+  ---@type table<string, dbml.RefStatement?>
   local seen = {}
   for _, ref in ipairs(analysis.ast.refs) do
     if ref.name then
       local first = seen[ref.name]
-      if first then
+      local current_range = ref.name_range
+      local first_range = first and first.name_range or nil
+      if first and current_range and first_range then
         add(
           items,
           document,
-          ref.name_range,
+          current_range,
           ERROR,
           "duplicate-ref-name",
           string.format(
             "Duplicate ref name '%s' (first defined on line %d)",
             ref.name,
-            line_number(document, first.name_range.start)
+            line_number(document, first_range.start)
           ),
           {
             {
-              range = first.name_range,
-              message = "First definition on line " .. line_number(document, first.name_range.start),
+              range = first_range,
+              message = "First definition on line " .. line_number(document, first_range.start),
             },
           }
         )
@@ -324,6 +385,9 @@ local function add_duplicate_ref_names(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_index_diagnostics(items, analysis, document)
   for _, table in ipairs(analysis.ast.tables) do
     -- Inherited columns are unknown to us, so an index may legitimately
@@ -351,6 +415,9 @@ local function add_index_diagnostics(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_group_diagnostics(items, analysis, document)
   for _, group in ipairs(analysis.ast.groups) do
     for _, member in ipairs(group.members) do
@@ -372,6 +439,9 @@ local function add_group_diagnostics(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_partial_diagnostics(items, analysis, document)
   for _, table in ipairs(analysis.ast.tables) do
     for _, include in ipairs(table.includes or {}) do
@@ -390,6 +460,10 @@ local function add_partial_diagnostics(items, analysis, document)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
+---@param endpoint dbml.Endpoint
 local function check_endpoint(items, analysis, document, endpoint)
   local table = find_endpoint_table(analysis.symbols, endpoint)
   if not table then
@@ -444,6 +518,9 @@ local function check_endpoint(items, analysis, document, endpoint)
   end
 end
 
+---@param items dbml.DiagnosticEntry[]
+---@param analysis dbml.Analysis
+---@param document dbml.Document
 local function add_ref_diagnostics(items, analysis, document)
   for _, reference in ipairs(refs.all(analysis.ast)) do
     check_endpoint(items, analysis, document, reference.from)
@@ -451,6 +528,9 @@ local function add_ref_diagnostics(items, analysis, document)
   end
 end
 
+---@param analysis dbml.Analysis
+---@param document dbml.Document
+---@return dbml.Diagnostic[]
 function M.diagnose(analysis, document)
   local items = {}
 

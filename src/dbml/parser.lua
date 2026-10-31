@@ -10,45 +10,83 @@ local Ref = require("dbml.ref")
 
 local concat = table.concat
 
+---@class dbml.Parser
+---@field tokens dbml.Token[]
+---@field text string
+---@field pos integer
+---@field errors dbml.Error[]
+---@field peek fun(self: dbml.Parser, n: integer?): dbml.Token
+---@field next fun(self: dbml.Parser): dbml.Token
+---@field parse_statement fun(self: dbml.Parser): dbml.Statement?
+
 local Parser = {}
 Parser.__index = Parser
 
+local FALLBACK_EOF = {
+  type = "eof",
+  value = "",
+  start = 0,
+  stop = 0,
+  line = 0,
+  col = 0,
+}
+
+---@param tokens dbml.Token[]
+---@param text string?
+---@return dbml.Parser
 function Parser.new(tokens, text)
-  return setmetatable({
+  ---@type dbml.Parser
+  local self = setmetatable({
     tokens = tokens,
     text = text or "",
     pos = 1,
     errors = {},
   }, Parser)
+  return self
 end
 
+---@param n integer?
+---@return dbml.Token
 function Parser:peek(n)
   return self.tokens[self.pos + (n or 0)]
+    or self.tokens[#self.tokens]
+    or FALLBACK_EOF
 end
 
+---@return dbml.Token
 function Parser:next()
-  local token = self.tokens[self.pos]
-  if token and token.type ~= "eof" then
+  local token = self:peek()
+  if token.type ~= "eof" then
     self.pos = self.pos + 1
   end
   return token
 end
 
+---@return integer
 function Parser:last_stop()
   local previous = self.tokens[self.pos - 1]
-  return previous and previous.stop or 0
+  if previous then
+    return previous.stop
+  end
+  return 0
 end
 
+---@param value string
+---@return boolean
 function Parser:at_punct(value)
   local token = self:peek()
   return token ~= nil and token.type == "punct" and token.value == value
 end
 
+---@param value string
+---@return boolean
 function Parser:at_word(value)
   local token = self:peek()
   return token ~= nil and token.type == "word" and token.value:lower() == value
 end
 
+---@param value string
+---@return dbml.Token?
 function Parser:accept_punct(value)
   if self:at_punct(value) then
     return self:next()
@@ -56,6 +94,8 @@ function Parser:accept_punct(value)
   return nil
 end
 
+---@param value string
+---@return dbml.Token?
 function Parser:expect_punct(value)
   local token = self:accept_punct(value)
   if not token then
@@ -64,12 +104,10 @@ function Parser:expect_punct(value)
   return token
 end
 
+---@param token dbml.Token?
+---@param message string
 function Parser:error(token, message)
   token = token or self:peek()
-  if not token then
-    local offset = self:last_stop()
-    token = { start = offset, stop = offset, line = 0, col = 0 }
-  end
   self.errors[#self.errors + 1] = {
     message = message,
     start = token.start,
@@ -79,6 +117,7 @@ function Parser:error(token, message)
   }
 end
 
+---@return dbml.Name?
 function Parser:parse_name()
   local token = self:peek()
   if token and (token.type == "word" or token.type == "string") then
@@ -93,6 +132,7 @@ function Parser:parse_name()
   return nil
 end
 
+---@return dbml.QualifiedName?
 function Parser:parse_qualified_name()
   local first = self:parse_name()
   if not first then
@@ -110,6 +150,9 @@ function Parser:parse_qualified_name()
     end
     self:next() -- .
     local part = self:parse_name()
+    if not part then
+      break
+    end
     parts[#parts + 1] = part.name
     ranges[#ranges + 1] = part.range
     stop = part.range.stop
@@ -125,13 +168,14 @@ end
 
 --- Skip a balanced `{ ... }` block.  Strings and backtick expressions are
 --- single tokens, so brace counting is safe.
+---@return nil
 function Parser:skip_balanced_block()
   local open = self:accept_punct("{")
   if not open then
     return
   end
   local depth = 1
-  while depth > 0 and self:peek() and self:peek().type ~= "eof" do
+  while depth > 0 and self:peek().type ~= "eof" do
     local token = self:next()
     if token.type == "punct" and token.value == "{" then
       depth = depth + 1
@@ -144,13 +188,14 @@ function Parser:skip_balanced_block()
   end
 end
 
+---@return nil
 function Parser:skip_balanced_parens()
   local open = self:accept_punct("(")
   if not open then
     return
   end
   local depth = 1
-  while depth > 0 and self:peek() and self:peek().type ~= "eof" do
+  while depth > 0 and self:peek().type ~= "eof" do
     local token = self:next()
     if token.type == "punct" and token.value == "(" then
       depth = depth + 1
@@ -165,11 +210,12 @@ end
 
 --- Records blocks contain CSV-style sample data.  They are not part of
 --- the schema model, so parse the header and skip the body.
+---@return dbml.Records?
 function Parser:parse_records()
   local keyword = self:next()
   local name
   local next_token = self:peek()
-  if next_token and next_token.type == "word" then
+  if next_token.type == "word" then
     local parsed = self:parse_qualified_name()
     name = parsed and parsed.name
   end
@@ -201,11 +247,13 @@ end
 
 --- Consume a setting value without interpreting it.  Used to recover
 --- when an inline ref is malformed.
+---@param start_line integer
+---@return nil
 function Parser:skip_setting_value(start_line)
   local depth = 0
   while true do
     local token = self:peek()
-    if not token or token.type == "eof" or token.line > start_line then
+    if token.type == "eof" or token.line > start_line then
       break
     end
     if token.type == "punct" and depth == 0
@@ -223,6 +271,9 @@ end
 
 --- Parse the value of an inline `ref:` setting:
 ---   [ref: > users.id]
+---@param context dbml.SettingsContext
+---@param start_line integer
+---@return dbml.Reference?
 function Parser:parse_inline_ref(context, start_line)
   local first = self:peek()
   local operator = self:parse_operator()
@@ -237,7 +288,12 @@ function Parser:parse_inline_ref(context, start_line)
     return nil
   end
 
-  local parent = Ref.Endpoint.from_table_column(context.table, context.column)
+  local context_table, context_column = context.table, context.column
+  if not context_table or not context_column then
+    return nil
+  end
+
+  local parent = Ref.Endpoint.from_table_column(context_table, context_column)
   return Ref.Reference.new({
     from = parent,
     to = target,
@@ -252,6 +308,9 @@ end
 -- attached to columns, indexes, and refs.  Values are kept as raw source
 -- text for display; inline refs additionally get a structured
 -- dbml.Reference.
+---@param context dbml.SettingsContext?
+---@return dbml.Setting[]
+---@return dbml.Range?
 function Parser:parse_settings(context)
   local open = self:expect_punct("[")
   if not open then
@@ -263,7 +322,7 @@ function Parser:parse_settings(context)
 
   while true do
     local token = self:peek()
-    if not token or token.type == "eof" then
+    if token.type == "eof" then
       break
     end
     if token.type == "punct" and token.value == "]" then
@@ -335,7 +394,7 @@ function Parser:parse_settings(context)
 
           while true do
             local value_token = self:peek()
-            if not value_token or value_token.type == "eof" then
+            if value_token.type == "eof" then
               break
             end
             if value_token.line > start_line then
@@ -355,7 +414,7 @@ function Parser:parse_settings(context)
             previous = value_token
           end
 
-          if first_value and previous then
+          if previous then
             setting.value_range = { start = first_value.start, stop = previous.stop }
             if first_value.type == "string" and first_value == previous then
               setting.value = first_value.value
@@ -384,6 +443,8 @@ function Parser:parse_settings(context)
   }
 end
 
+---@param table dbml.Table
+---@return dbml.Column?
 function Parser:parse_column(table)
   local name_token = self:next()
   local column = {
@@ -423,7 +484,7 @@ function Parser:parse_column(table)
       local previous = nil
       repeat
         local token = self:next()
-        if not token or token.type == "eof" then
+        if token.type == "eof" then
           break
         end
         previous = token
@@ -460,12 +521,13 @@ function Parser:parse_column(table)
   return column
 end
 
+---@return dbml.Note
 function Parser:parse_note()
   local keyword = self:next()
   self:expect_punct(":")
 
   local token = self:peek()
-  if token and token.type == "string" then
+  if token.type == "string" then
     self:next()
     return {
       text = token.value,
@@ -475,7 +537,7 @@ function Parser:parse_note()
 
   local parts = {}
   local previous = keyword
-  while self:peek() and self:peek().type ~= "eof"
+  while self:peek().type ~= "eof"
     and self:peek().line == keyword.line
     and not (self:peek().type == "punct" and self:peek().value == "}") do
     previous = self:next()
@@ -487,12 +549,13 @@ function Parser:parse_note()
   }
 end
 
+---@return dbml.Index
 function Parser:parse_parenthesized_index()
   local open = self:next() -- (
   local tokens = {}
   local depth = 0
 
-  while self:peek() and self:peek().type ~= "eof" do
+  while self:peek().type ~= "eof" do
     local token = self:peek()
     if token.type == "punct" and token.value == ")" and depth == 0 then
       break
@@ -539,6 +602,7 @@ function Parser:parse_parenthesized_index()
         },
       },
       has_expression = true,
+      settings = {},
       start = open.start,
       stop = stop,
     }
@@ -549,17 +613,17 @@ function Parser:parse_parenthesized_index()
     columns = columns,
     expressions = {},
     has_expression = false,
+    settings = {},
     start = open.start,
     stop = stop,
   }
 end
 
+---@return dbml.Index?
 function Parser:parse_index_entry()
   local token = self:peek()
-  if not token then
-    return nil
-  end
 
+  ---@type dbml.Index
   local entry
   if self:at_punct("(") then
     entry = self:parse_parenthesized_index()
@@ -602,6 +666,8 @@ function Parser:parse_index_entry()
   return entry
 end
 
+---@param table dbml.Table
+---@return nil
 function Parser:parse_indexes(table)
   local keyword = self:next()
   local open = self:expect_punct("{")
@@ -610,7 +676,7 @@ function Parser:parse_indexes(table)
   end
 
   local indexes = {}
-  while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+  while self:peek().type ~= "eof" and not self:at_punct("}") do
     local entry = self:parse_index_entry()
     if entry then
       indexes[#indexes + 1] = entry
@@ -633,6 +699,8 @@ function Parser:parse_indexes(table)
   }
 end
 
+---@param partial boolean?
+---@return dbml.Table?
 function Parser:parse_table(partial)
   local keyword = self:next()
   local qualified = self:parse_qualified_name()
@@ -683,7 +751,7 @@ function Parser:parse_table(partial)
 
   table.body_start = open.stop
 
-  while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+  while self:peek().type ~= "eof" and not self:at_punct("}") do
     local token = self:peek()
     if token.type == "word" and token.value:lower() == "indexes"
       and self:peek(1) and self:peek(1).value == "{" then
@@ -730,6 +798,7 @@ function Parser:parse_table(partial)
   return table
 end
 
+---@return dbml.Enum?
 function Parser:parse_enum()
   local keyword = self:next()
   local qualified = self:parse_qualified_name()
@@ -766,7 +835,7 @@ function Parser:parse_enum()
   end
   enum.body_start = open.stop
 
-  while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+  while self:peek().type ~= "eof" and not self:at_punct("}") do
     local token = self:peek()
     if token.type == "word" and token.value:lower() == "note"
       and self:peek(1) and self:peek(1).value == ":" then
@@ -805,6 +874,7 @@ function Parser:parse_enum()
   return enum
 end
 
+---@return dbml.Endpoint?
 function Parser:parse_endpoint()
   local qualified = self:parse_qualified_name()
   if not qualified then
@@ -820,7 +890,7 @@ function Parser:parse_endpoint()
     local open = self:next() -- (
     local columns = {}
 
-    while self:peek() and self:peek().type ~= "eof" and not self:at_punct(")") do
+    while self:peek().type ~= "eof" and not self:at_punct(")") do
       local token = self:peek()
       if token.type == "word" or token.type == "string" then
         self:next()
@@ -845,9 +915,14 @@ function Parser:parse_endpoint()
       return nil
     end
 
+    local table_name = parts[#parts]
+    if not table_name then
+      return nil
+    end
+
     return Ref.Endpoint.new({
       schema = #parts > 1 and concat(parts, ".", 1, #parts - 1) or nil,
-      table = parts[#parts],
+      table = table_name,
       columns = columns,
       parts = parts,
       ranges = ranges,
@@ -868,22 +943,31 @@ function Parser:parse_endpoint()
     return nil
   end
 
+  local table_name = parts[#parts - 1]
+  local column_name = parts[#parts]
+  local table_range = ranges[#ranges - 1]
+  local column_range = ranges[#ranges]
+  if not table_name or not column_name or not table_range or not column_range then
+    return nil
+  end
+
   return Ref.Endpoint.new({
     schema = #parts > 2 and concat(parts, ".", 1, #parts - 2) or nil,
-    table = parts[#parts - 1],
-    column = parts[#parts],
+    table = table_name,
+    column = column_name,
     parts = parts,
     ranges = ranges,
     name = qualified.name,
     range = qualified.range,
-    table_range = ranges[#ranges - 1],
-    column_range = ranges[#ranges],
+    table_range = table_range,
+    column_range = column_range,
   })
 end
 
+---@return string?
 function Parser:parse_operator()
   local first = self:peek()
-  if not first or first.type ~= "punct" then
+  if first.type ~= "punct" then
     self:error(first, "expected a relationship operator")
     return nil
   end
@@ -910,6 +994,8 @@ function Parser:parse_operator()
   return (has_prefix and "?" or "") .. core.value .. (has_suffix and "?" or "")
 end
 
+---@param source "top_level"|"inline"?
+---@return dbml.Reference?
 function Parser:parse_ref_expression(source)
   local left = self:parse_endpoint()
   if not left then
@@ -935,6 +1021,7 @@ function Parser:parse_ref_expression(source)
   })
 end
 
+---@return dbml.RefStatement?
 function Parser:parse_ref()
   local keyword = self:next()
   local ref = {
@@ -967,7 +1054,7 @@ function Parser:parse_ref()
   elseif self:at_punct("{") then
     local open = self:next()
     ref.body_start = open.stop
-    while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+    while self:peek().type ~= "eof" and not self:at_punct("}") do
       local expression = self:parse_ref_expression("top_level")
       if expression then
         if self:at_punct("[") then
@@ -1001,6 +1088,7 @@ function Parser:parse_ref()
   return ref
 end
 
+---@return dbml.TableGroup?
 function Parser:parse_table_group()
   local keyword = self:next()
   local name = self:parse_name()
@@ -1031,17 +1119,21 @@ function Parser:parse_table_group()
   end
   group.body_start = open.stop
 
-  while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+  while self:peek().type ~= "eof" and not self:at_punct("}") do
     local token = self:peek()
     if token.type == "word" and token.value:lower() == "note"
       and self:peek(1) and self:peek(1).value == ":" then
       group.note = self:parse_note()
     elseif token.type == "word" or token.type == "string" then
       local member = self:parse_qualified_name()
-      group.members[#group.members + 1] = {
-        name = member.name,
-        range = member.range,
-      }
+      if member then
+        group.members[#group.members + 1] = {
+          name = member.name,
+          range = member.range,
+        }
+      else
+        self:error(token, "expected a table name")
+      end
     else
       self:error(token, "unexpected token in table group")
       self:next()
@@ -1058,6 +1150,7 @@ function Parser:parse_table_group()
   return group
 end
 
+---@return dbml.Project?
 function Parser:parse_project()
   local keyword = self:next()
   local name = self:parse_name()
@@ -1081,7 +1174,7 @@ function Parser:parse_project()
   end
   project.body_start = open.stop
 
-  while self:peek() and self:peek().type ~= "eof" and not self:at_punct("}") do
+  while self:peek().type ~= "eof" and not self:at_punct("}") do
     local token = self:peek()
     if token.type == "word" or token.type == "string" then
       self:next()
@@ -1093,12 +1186,12 @@ function Parser:parse_project()
         self:next()
         local first_value = self:peek()
         local previous = nil
-        while self:peek() and self:peek().type ~= "eof"
+        while self:peek().type ~= "eof"
           and self:peek().line == token.line
           and not (self:peek().type == "punct" and self:peek().value == "}") do
           previous = self:next()
         end
-        if first_value and previous then
+        if previous then
           setting.value_range = { start = first_value.start, stop = previous.stop }
           if first_value.type == "string" and first_value == previous then
             setting.value = first_value.value
@@ -1124,9 +1217,10 @@ function Parser:parse_project()
   return project
 end
 
+---@return dbml.Statement?
 function Parser:parse_statement()
   local token = self:peek()
-  if not token or token.type == "eof" then
+  if token.type == "eof" then
     return nil
   end
   if token.type == "punct" and (token.value == "}" or token.value == "]") then
@@ -1159,6 +1253,10 @@ function Parser:parse_statement()
 end
 
 --- Parse a token stream.  Returns `document, errors`.
+---@param tokens dbml.Token[]
+---@param text string
+---@return dbml.Ast document
+---@return dbml.Error[] errors
 function M.parse(tokens, text)
   local parser = Parser.new(tokens, text)
   local document = {
@@ -1171,7 +1269,7 @@ function M.parse(tokens, text)
     projects = {},
   }
 
-  while parser:peek() and parser:peek().type ~= "eof" do
+  while parser:peek().type ~= "eof" do
     local before = parser.pos
     local statement = parser:parse_statement()
     if statement then

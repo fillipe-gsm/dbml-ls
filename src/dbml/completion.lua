@@ -79,6 +79,8 @@ local OPERATORS = {
   { label = "<>", detail = "many-to-many" },
 }
 
+---@param byte integer?
+---@return boolean
 local function is_identifier_byte(byte)
   if not byte then
     return false
@@ -90,6 +92,10 @@ local function is_identifier_byte(byte)
     or byte >= 128
 end
 
+---@param text string
+---@param offset integer
+---@return integer prefix_start
+---@return string prefix
 local function prefix_at(text, offset)
   local i = offset
   while i > 0 and is_identifier_byte(text:byte(i)) do
@@ -98,6 +104,10 @@ local function prefix_at(text, offset)
   return i, text:sub(i + 1, offset)
 end
 
+---@param tokens dbml.Token[]
+---@param offset integer
+---@return dbml.Token? previous
+---@return integer? previous_index
 local function previous_token(tokens, offset)
   local previous, previous_index
   for i = 1, #tokens do
@@ -119,6 +129,10 @@ local function previous_token(tokens, offset)
   return previous, previous_index
 end
 
+---@param tokens dbml.Token[]
+---@param line integer
+---@param offset integer
+---@return dbml.Token[]
 local function tokens_on_line(tokens, line, offset)
   local result = {}
   for i = 1, #tokens do
@@ -137,10 +151,16 @@ local function tokens_on_line(tokens, line, offset)
   return result
 end
 
+---@param range dbml.Range?
+---@param offset integer
+---@return boolean
 local function contains(range, offset)
   return range ~= nil and range.start <= offset and offset <= range.stop
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.Table?
 local function find_table_at(ast, offset)
   local best
   for _, table in ipairs(ast.tables) do
@@ -158,6 +178,9 @@ local function find_table_at(ast, offset)
   return best
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.Enum?
 local function find_enum_at(ast, offset)
   for _, enum in ipairs(ast.enums) do
     if enum.body_start and contains({
@@ -170,6 +193,9 @@ local function find_enum_at(ast, offset)
   return nil
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.Setting?
 local function find_ref_setting_at(ast, offset)
   for _, table in ipairs(ast.tables) do
     for _, column in ipairs(table.columns) do
@@ -184,6 +210,9 @@ local function find_ref_setting_at(ast, offset)
   return nil
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.Table?
 local function find_indexes_at(ast, offset)
   for _, table in ipairs(ast.tables) do
     if contains(table.indexes_body_range, offset) then
@@ -193,6 +222,9 @@ local function find_indexes_at(ast, offset)
   return nil
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return boolean
 local function find_settings_at(ast, offset)
   local function check(range)
     if contains(range, offset) then
@@ -244,6 +276,9 @@ local function find_settings_at(ast, offset)
   return false
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.RefStatement?
 local function find_ref_at(ast, offset)
   for _, ref in ipairs(ast.refs) do
     if contains(ref.range, offset) then
@@ -253,6 +288,9 @@ local function find_ref_at(ast, offset)
   return nil
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.Project?
 local function find_project_at(ast, offset)
   for _, project in ipairs(ast.projects) do
     if project.body_start and contains({
@@ -265,6 +303,9 @@ local function find_project_at(ast, offset)
   return nil
 end
 
+---@param ast dbml.Ast
+---@param offset integer
+---@return dbml.TableGroup?
 local function find_group_at(ast, offset)
   for _, group in ipairs(ast.groups) do
     if group.body_start and contains({
@@ -277,6 +318,8 @@ local function find_group_at(ast, offset)
   return nil
 end
 
+---@param line_tokens dbml.Token[]
+---@return boolean
 local function line_has_open_bracket(line_tokens)
   local depth = 0
   for _, token in ipairs(line_tokens) do
@@ -289,6 +332,9 @@ local function line_has_open_bracket(line_tokens)
   return depth > 0
 end
 
+---@param document dbml.Document
+---@param offset integer
+---@return boolean
 local function line_is_ref(document, offset)
   local line = document:position_at(offset).line
   local start = document:line_start_offset(line)
@@ -299,6 +345,12 @@ local function line_is_ref(document, offset)
     or before:match("^%s*[Rr]ef%s+[^%s:]+%s*$") ~= nil
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param spec dbml.CompletionSpec
+---@param snippets boolean
+---@return dbml.CompletionItem
 local function make_item(document, prefix_start, offset, spec, snippets)
   local new_text = spec.label
   local insert_text_format
@@ -331,6 +383,9 @@ local function make_item(document, prefix_start, offset, spec, snippets)
   return item
 end
 
+---@param items dbml.CompletionItem[]
+---@param seen table<string, boolean>
+---@param item dbml.CompletionItem
 local function push(items, seen, item)
   local key = tostring(item.kind) .. "\0" .. item.label
   if not seen[key] then
@@ -339,6 +394,11 @@ local function push(items, seen, item)
   end
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param snippets boolean
+---@return dbml.CompletionItem[]
 local function keyword_items(document, prefix_start, offset, snippets)
   local items = {}
   for _, keyword in ipairs(KEYWORDS) do
@@ -354,6 +414,11 @@ local function keyword_items(document, prefix_start, offset, snippets)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param analysis dbml.Analysis
+---@return dbml.CompletionItem[]
 local function type_items(document, prefix_start, offset, analysis)
   local items, seen = {}, {}
   for _, name in ipairs(TYPES) do
@@ -376,6 +441,10 @@ local function type_items(document, prefix_start, offset, analysis)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@return dbml.CompletionItem[]
 local function setting_items(document, prefix_start, offset)
   local items = {}
   for _, setting in ipairs(SETTINGS) do
@@ -389,6 +458,12 @@ local function setting_items(document, prefix_start, offset)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param analysis dbml.Analysis
+---@param include_enums boolean?
+---@return dbml.CompletionItem[]
 local function table_items(document, prefix_start, offset, analysis, include_enums)
   local items, seen = {}, {}
   for _, table in ipairs(analysis.symbols.table_list) do
@@ -415,6 +490,11 @@ local function table_items(document, prefix_start, offset, analysis, include_enu
   return items
 end
 
+---@param table dbml.Table
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@return dbml.CompletionItem[]
 local function column_items(table, document, prefix_start, offset)
   local items, seen = {}, {}
   for _, column in ipairs(table.columns) do
@@ -429,6 +509,11 @@ local function column_items(table, document, prefix_start, offset)
   return items
 end
 
+---@param enum dbml.Enum
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@return dbml.CompletionItem[]
 local function enum_value_items(enum, document, prefix_start, offset)
   local items, seen = {}, {}
   for _, value in ipairs(enum.values) do
@@ -442,6 +527,10 @@ local function enum_value_items(enum, document, prefix_start, offset)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@return dbml.CompletionItem[]
 local function operator_items(document, prefix_start, offset)
   local items = {}
   for _, operator in ipairs(OPERATORS) do
@@ -455,6 +544,11 @@ local function operator_items(document, prefix_start, offset)
   return items
 end
 
+---@param table dbml.Table
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@return dbml.CompletionItem[]
 local function index_items(table, document, prefix_start, offset)
   local items, seen = {}, {}
   for _, column in ipairs(table.columns) do
@@ -476,6 +570,11 @@ local function index_items(table, document, prefix_start, offset)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param snippets boolean
+---@return dbml.CompletionItem[]
 local function body_items(document, prefix_start, offset, snippets)
   local items = {}
   items[#items + 1] = make_item(document, prefix_start, offset, {
@@ -495,6 +594,11 @@ local function body_items(document, prefix_start, offset, snippets)
   return items
 end
 
+---@param document dbml.Document
+---@param prefix_start integer
+---@param offset integer
+---@param snippets boolean
+---@return dbml.CompletionItem[]
 local function project_key_items(document, prefix_start, offset, snippets)
   return {
     make_item(document, prefix_start, offset, {
@@ -515,6 +619,14 @@ local function project_key_items(document, prefix_start, offset, snippets)
 end
 
 -- Ref, project, group, and top-level keyword contexts.
+---@param analysis dbml.Analysis
+---@param document dbml.Document
+---@param offset integer
+---@param prefix_start integer
+---@param line_tokens dbml.Token[]
+---@param previous dbml.Token?
+---@param snippets boolean
+---@return dbml.CompletionItem[]
 local function structural_or_keyword(analysis, document, offset, prefix_start, line_tokens, previous, snippets)
   if find_ref_at(analysis.ast, offset) or line_is_ref(document, offset) then
     if previous and previous.type == "word" and offset > previous.stop then
@@ -544,6 +656,11 @@ local function structural_or_keyword(analysis, document, offset, prefix_start, l
   return keyword_items(document, prefix_start, offset, snippets)
 end
 
+---@param analysis dbml.Analysis
+---@param document dbml.Document
+---@param position dbml.Position
+---@param options dbml.CompletionOptions?
+---@return dbml.CompletionItem[]
 function M.complete(analysis, document, position, options)
   options = options or {}
   local snippets = options.snippets == true

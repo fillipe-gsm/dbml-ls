@@ -6,6 +6,8 @@ local symbols = require("dbml.symbols")
 
 local M = {}
 
+---@param document dbml.Document
+---@return dbml.Analysis
 function M.get(document)
   if document._analysis and document._analysis_version == document.version then
     return document._analysis

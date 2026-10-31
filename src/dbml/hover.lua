@@ -7,6 +7,9 @@ local M = {}
 
 local concat = table.concat
 
+---@param document dbml.Document
+---@param range dbml.Range
+---@return dbml.LspRange
 local function lsp_range(document, range)
   return {
     start = document:position_at(range.start),
@@ -14,6 +17,8 @@ local function lsp_range(document, range)
   }
 end
 
+---@param settings dbml.Setting[]?
+---@return string
 local function settings_text(settings)
   local parts = {}
   for _, setting in ipairs(settings or {}) do
@@ -26,6 +31,8 @@ local function settings_text(settings)
   return concat(parts, ", ")
 end
 
+---@param table dbml.Table
+---@return string
 local function table_markdown(table)
   local lines = { "**Table** `" .. table.full_name .. "`" }
   if table.alias then
@@ -51,6 +58,10 @@ local function table_markdown(table)
   return concat(lines, "\n")
 end
 
+---@param table dbml.Table
+---@param column dbml.Column
+---@param analysis dbml.Analysis
+---@return string
 local function column_markdown(table, column, analysis)
   local lines = {
     "**Column** `" .. table.full_name .. "." .. column.name .. "`",
@@ -75,6 +86,8 @@ local function column_markdown(table, column, analysis)
   return concat(lines, "\n")
 end
 
+---@param enum dbml.Enum
+---@return string
 local function enum_markdown(enum)
   local lines = { "**Enum** `" .. (enum.full_name or enum.name) .. "`" }
   if #enum.values > 0 then
@@ -94,10 +107,14 @@ local function enum_markdown(enum)
   return concat(lines, "\n")
 end
 
+---@param expression dbml.Reference
+---@return string
 local function ref_expression_text(expression)
   return expression.from.name .. " " .. expression.operator .. " " .. expression.to.name
 end
 
+---@param ref dbml.RefStatement
+---@return string
 local function ref_markdown(ref)
   local lines = { "**Ref**" }
   for _, expression in ipairs(ref.expressions) do
@@ -110,6 +127,9 @@ local function ref_markdown(ref)
   return concat(lines, "\n")
 end
 
+---@param table dbml.Table
+---@param index dbml.Index
+---@return string
 local function index_markdown(table, index)
   local lines = { "**Index** on `" .. table.full_name .. "`" }
 
@@ -139,6 +159,8 @@ local function index_markdown(table, index)
   return concat(lines, "\n")
 end
 
+---@param project dbml.Project
+---@return string
 local function project_markdown(project)
   local lines = { "**Project** `" .. project.name .. "`" }
   for _, setting in ipairs(project.settings) do
@@ -149,33 +171,58 @@ local function project_markdown(project)
   return concat(lines, "\n")
 end
 
+---@param symbol dbml.ResolvedSymbol
+---@param analysis dbml.Analysis
+---@return string?
 local function markdown_for(symbol, analysis)
   if symbol.kind == "table" then
-    return table_markdown(symbol.table)
+    local table = symbol.table
+    return table and table_markdown(table)
   elseif symbol.kind == "column" then
-    return column_markdown(symbol.table, symbol.column, analysis)
+    local table, column = symbol.table, symbol.column
+    if not table or not column then
+      return nil
+    end
+    return column_markdown(table, column, analysis)
   elseif symbol.kind == "type" then
-    local enum = symbols.find_enum(analysis.symbols, symbol.column.type)
+    local column = symbol.column
+    if not column or not column.type then
+      return "Type `unknown`"
+    end
+    local enum = symbols.find_enum(analysis.symbols, column.type)
     if enum then
       return enum_markdown(enum)
     end
-    return "Type `" .. (symbol.column.type or "unknown") .. "`"
+    return "Type `" .. column.type .. "`"
   elseif symbol.kind == "enum" then
-    return enum_markdown(symbol.enum)
+    local enum = symbol.enum
+    return enum and enum_markdown(enum)
   elseif symbol.kind == "enum_value" then
-    return enum_markdown(symbol.enum)
+    local enum = symbol.enum
+    return enum and enum_markdown(enum)
   elseif symbol.kind == "ref" then
-    return ref_markdown(symbol.ref)
+    local ref = symbol.ref
+    return ref and ref_markdown(ref)
   elseif symbol.kind == "index" then
-    return index_markdown(symbol.table, symbol.index)
+    local table, index = symbol.table, symbol.index
+    if not table or not index then
+      return nil
+    end
+    return index_markdown(table, index)
   elseif symbol.kind == "group" then
-    return "**TableGroup** `" .. symbol.group.name .. "`"
+    local group = symbol.group
+    return group and ("**TableGroup** `" .. group.name .. "`")
   elseif symbol.kind == "project" then
-    return project_markdown(symbol.project)
+    local project = symbol.project
+    return project and project_markdown(project)
   end
   return nil
 end
 
+---@param analysis dbml.Analysis
+---@param document dbml.Document
+---@param position dbml.Position
+---@return dbml.Hover?
 function M.hover(analysis, document, position)
   local offset = document:offset_at(position)
   local symbol = resolve.at(analysis, offset)

@@ -10,12 +10,35 @@ local definition = require("dbml.definition")
 local symbols = require("dbml.symbols")
 local diagnostics_engine = require("dbml.diagnostics")
 
+---@class dbml.Server
+---@field send fun(message: table)
+---@field documents table<string, dbml.Document>
+---@field initialized boolean
+---@field shutdown_requested boolean
+---@field exit_code integer?
+---@field position_encoding dbml.PositionEncoding
+---@field supports_snippets boolean
+---@field root_uri string?
+---@field client_info table?
+---@field handlers table<string, function>
+---@field respond fun(self: dbml.Server, id: any, result: any)
+---@field respond_error fun(self: dbml.Server, id: any, code: integer, message: string, data: any?)
+---@field notify fun(self: dbml.Server, method: string, params: table?)
+---@field document_for fun(self: dbml.Server, params: table): dbml.Document?
+---@field publish_diagnostics fun(self: dbml.Server, document: dbml.Document)
+---@field clear_diagnostics fun(self: dbml.Server, uri: string)
+---@field handle_did_open fun(self: dbml.Server, params: table)
+---@field handle_did_change fun(self: dbml.Server, params: table)
+---@field handle_did_close fun(self: dbml.Server, params: table)
+---@field dispatch fun(self: dbml.Server, message: any)
+
 local Server = {}
 Server.__index = Server
 
 local SERVER_NAME = "dbml-ls"
 local SERVER_VERSION = "0.1.0"
 
+---@type table<string, integer>
 local ERROR = {
   InvalidRequest = -32600,
   MethodNotFound = -32601,
@@ -23,8 +46,11 @@ local ERROR = {
   ServerNotInitialized = -32002,
 }
 
+---@param options dbml.ServerOptions?
+---@return dbml.Server
 function Server.new(options)
   options = options or {}
+  ---@type dbml.Server
   local self = setmetatable({
     send = options.send or function() end,
     documents = {},
@@ -62,7 +88,10 @@ function Server.new(options)
   return self
 end
 
+---@param id any
+---@param result any
 function Server:respond(id, result)
+  ---@cast self dbml.Server
   self.send({
     jsonrpc = "2.0",
     id = id,
@@ -70,7 +99,12 @@ function Server:respond(id, result)
   })
 end
 
+---@param id any
+---@param code integer
+---@param message string
+---@param data any?
 function Server:respond_error(id, code, message, data)
+  ---@cast self dbml.Server
   local error_object = {
     code = code,
     message = message,
@@ -85,7 +119,10 @@ function Server:respond_error(id, code, message, data)
   })
 end
 
+---@param method string
+---@param params table?
 function Server:notify(method, params)
+  ---@cast self dbml.Server
   self.send({
     jsonrpc = "2.0",
     method = method,
@@ -93,7 +130,10 @@ function Server:notify(method, params)
   })
 end
 
+---@param params table
+---@return dbml.Document?
 function Server:document_for(params)
+  ---@cast self dbml.Server
   local text_document = params and params.textDocument
   local uri = text_document and text_document.uri
   if not uri then
@@ -102,6 +142,8 @@ function Server:document_for(params)
   return self.documents[uri]
 end
 
+---@param params table
+---@param message table
 function Server:handle_initialize(params, message)
   if self.initialized then
     self:respond_error(message.id, ERROR.InvalidRequest, "Server is already initialized")
@@ -160,22 +202,28 @@ function Server:handle_initialize(params, message)
   })
 end
 
+---@return nil
 function Server.handle_initialized()
   -- No work to do yet.
 end
 
+---@param _ table
+---@param message table
 function Server:handle_shutdown(_, message)
   self.shutdown_requested = true
   self:respond(message.id, json.null)
 end
 
+---@return nil
 function Server:handle_exit()
   self.exit_code = self.shutdown_requested and 0 or 1
 end
 
+---@return nil
 function Server.handle_noop()
 end
 
+---@param document dbml.Document
 function Server:publish_diagnostics(document)
   local ok, result = pcall(function()
     local analyzed = analysis.get(document)
@@ -193,6 +241,7 @@ function Server:publish_diagnostics(document)
   })
 end
 
+---@param uri string
 function Server:clear_diagnostics(uri)
   self:notify("textDocument/publishDiagnostics", {
     uri = uri,
@@ -200,7 +249,9 @@ function Server:clear_diagnostics(uri)
   })
 end
 
+---@param params table
 function Server:handle_did_open(params)
+  ---@cast self dbml.Server
   local text_document = params.textDocument
   if not text_document or not text_document.uri then
     return
@@ -211,6 +262,7 @@ function Server:handle_did_open(params)
   self:publish_diagnostics(document)
 end
 
+---@param params table
 function Server:handle_did_change(params)
   local document = self:document_for(params)
   if not document then
@@ -228,7 +280,9 @@ function Server:handle_did_change(params)
   self:publish_diagnostics(document)
 end
 
+---@param params table
 function Server:handle_did_close(params)
+  ---@cast self dbml.Server
   local document = self:document_for(params)
   if document then
     self:clear_diagnostics(document.uri)
@@ -236,6 +290,8 @@ function Server:handle_did_close(params)
   end
 end
 
+---@param params table
+---@param message table
 function Server:handle_completion(params, message)
   local document = self:document_for(params)
   if not document then
@@ -254,6 +310,8 @@ function Server:handle_completion(params, message)
   })
 end
 
+---@param params table
+---@param message table
 function Server:handle_hover(params, message)
   local document = self:document_for(params)
   if not document then
@@ -265,6 +323,8 @@ function Server:handle_hover(params, message)
   self:respond(message.id, result or json.null)
 end
 
+---@param params table
+---@param message table
 function Server:handle_definition(params, message)
   local document = self:document_for(params)
   if not document then
@@ -280,6 +340,8 @@ function Server:handle_definition(params, message)
   self:respond(message.id, result or json.null)
 end
 
+---@param params table
+---@param message table
 function Server:handle_document_symbol(params, message)
   local document = self:document_for(params)
   if not document then
@@ -290,7 +352,9 @@ function Server:handle_document_symbol(params, message)
   self:respond(message.id, symbols.document_symbols(analyzed.ast, document))
 end
 
+---@param message any
 function Server:dispatch(message)
+  ---@cast self dbml.Server
   if type(message) ~= "table" then
     self:respond_error(json.null, ERROR.InvalidRequest, "Invalid Request")
     return

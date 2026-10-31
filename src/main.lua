@@ -15,12 +15,15 @@ local Server = require("dbml.server")
 
 io.stdout:setvbuf("no")
 
+---@type dbml.Server
 local server = Server.new({
+  ---@param message table
   send = function(message)
     rpc.write_message(io.stdout, message)
   end,
 })
 
+---@type integer?
 local exit_code = nil
 
 while not exit_code do

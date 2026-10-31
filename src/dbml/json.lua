@@ -10,10 +10,14 @@ local dkjson = require("vendor.dkjson")
 
 local M = {}
 
+---@type table
 M.null = dkjson.null
 
 --- Decode a JSON string.  `null` is preserved as M.null instead of nil so
 --- that it keeps its place inside arrays.
+---@param text string
+---@return table? value
+---@return string? err
 function M.decode(text)
   local value, pos, err = dkjson.decode(text, 1, dkjson.null)
   if value == nil then
@@ -25,16 +29,27 @@ function M.decode(text)
   return value
 end
 
+---@param value any
+---@return string
 function M.encode(value)
-  return dkjson.encode(value)
+  local encoded, err = dkjson.encode(value)
+  if not encoded then
+    error(err or "could not encode JSON", 2)
+  end
+  ---@cast encoded string
+  return encoded
 end
 
 --- An empty table that must be encoded as [].
+---@param values table?
+---@return table
 function M.array(values)
   return values or {}
 end
 
 --- An empty table that must be encoded as {}.
+---@param values table?
+---@return table
 function M.object(values)
   values = values or {}
   if next(values) == nil then

@@ -7,10 +7,16 @@ local symbols = require("dbml.symbols")
 
 local M = {}
 
+---@param range dbml.Range?
+---@param offset integer
+---@return boolean
 local function contains(range, offset)
   return range ~= nil and range.start <= offset and offset <= range.stop
 end
 
+---@param table dbml.Table
+---@param name string?
+---@return dbml.Column?
 local function local_column(table, name)
   for _, column in ipairs(table.columns) do
     if column.name == name then
@@ -20,24 +26,33 @@ local function local_column(table, name)
   return nil
 end
 
+---@param analysis dbml.Analysis
+---@param endpoint dbml.Endpoint
+---@param offset integer
+---@return dbml.ResolvedSymbol?
 local function resolve_endpoint(analysis, endpoint, offset)
   if endpoint.columns then
     for _, column in ipairs(endpoint.columns) do
       if contains(column.range, offset) then
         local table = symbols.find_table(analysis.symbols, endpoint.table)
-        local resolved = table and local_column(table, column.name)
-        if resolved then
-          return { kind = "column", table = table, column = resolved, range = column.range }
+        if table then
+          local resolved = local_column(table, column.name)
+          if resolved then
+            return { kind = "column", table = table, column = resolved, range = column.range }
+          end
         end
       end
     end
   end
 
-  if contains(endpoint.column_range, offset) then
+  local column_range = endpoint.column_range
+  if column_range and endpoint.column and contains(column_range, offset) then
     local table = symbols.find_table(analysis.symbols, endpoint.table)
-    local column = table and local_column(table, endpoint.column)
-    if column then
-      return { kind = "column", table = table, column = column, range = endpoint.column_range }
+    if table then
+      local column = local_column(table, endpoint.column)
+      if column then
+        return { kind = "column", table = table, column = column, range = column_range }
+      end
     end
   end
 
@@ -54,16 +69,16 @@ end
 ---@class dbml.ResolvedSymbol
 ---@field kind string
 ---@field range dbml.Range
----@field table? table
----@field column? table
----@field enum? table
----@field value? table
----@field ref? table
----@field index? table
----@field group? table
----@field project? table
+---@field table? dbml.Table
+---@field column? dbml.Column
+---@field enum? dbml.Enum
+---@field value? dbml.EnumValue
+---@field ref? dbml.RefStatement
+---@field index? dbml.Index
+---@field group? dbml.TableGroup
+---@field project? dbml.Project
 
----@param analysis table
+---@param analysis dbml.Analysis
 ---@param offset integer
 ---@return dbml.ResolvedSymbol?
 function M.at(analysis, offset)
@@ -88,8 +103,9 @@ function M.at(analysis, offset)
       if contains(column.name_range, offset) then
         return { kind = "column", table = table, column = column, range = column.name_range }
       end
-      if contains(column.type_range, offset) then
-        return { kind = "type", table = table, column = column, range = column.type_range }
+      local type_range = column.type_range
+      if type_range and contains(type_range, offset) then
+        return { kind = "type", table = table, column = column, range = type_range }
       end
       for _, setting in ipairs(column.settings or {}) do
         if setting.ref and contains(setting.ref.to.range, offset) then

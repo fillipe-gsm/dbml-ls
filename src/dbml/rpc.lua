@@ -17,6 +17,10 @@ local M = {}
 -- Returns `message` on success.  On failure returns `nil, kind, detail`
 -- where kind is one of "eof", "parse", or "framing".  A parse error is
 -- recoverable (the frame was consumed); a framing error is not.
+---@param stream file*
+---@return table? message
+---@return string? kind
+---@return string? detail
 function M.read_message(stream)
   local headers = {}
   local saw_header = false
@@ -65,6 +69,8 @@ end
 
 --- Write one framed message and flush immediately.  Forgetting the flush
 --- is a classic cause of a language server that appears to hang.
+---@param stream file*
+---@param message table
 function M.write_message(stream, message)
   local body = json.encode(message)
   stream:write(("Content-Length: %d\r\n\r\n"):format(#body) .. body)
