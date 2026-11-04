@@ -33,10 +33,15 @@ end
 --- Tokenize `text`.
 --
 -- Returns `tokens, errors`.  A trailing EOF token is always present.
+-- By default comments are skipped; pass `{ comments = true }` to retain
+-- them as `comment` tokens (used by the formatter).
 ---@param text string
+---@param options dbml.TokenizeOptions?
 ---@return dbml.Token[] tokens
 ---@return dbml.Error[] errors
-function M.tokenize(text)
+function M.tokenize(text, options)
+  options = options or {}
+  local keep_comments = options.comments == true
   local tokens = {}
   local errors = {}
   local i = 1
@@ -44,6 +49,7 @@ function M.tokenize(text)
   local line = 0
   local col = 0
 
+  ---@return nil
   local function bump()
     local byte = text:byte(i)
     if not byte then
@@ -58,6 +64,11 @@ function M.tokenize(text)
     i = i + 1
   end
 
+  ---@param kind string
+  ---@param value string
+  ---@param start_offset integer
+  ---@param start_line integer
+  ---@param start_col integer
   local function add(kind, value, start_offset, start_line, start_col)
     tokens[#tokens + 1] = {
       type = kind,
@@ -69,6 +80,10 @@ function M.tokenize(text)
     }
   end
 
+  ---@param message string
+  ---@param start_offset integer
+  ---@param start_line integer
+  ---@param start_col integer
   local function record_error(message, start_offset, start_line, start_col)
     errors[#errors + 1] = {
       message = message,
@@ -87,8 +102,13 @@ function M.tokenize(text)
       bump()
 
     elseif char == "/" and text:sub(i, i + 1) == "//" then
+      local start_offset, start_line, start_col = i - 1, line, col
       while i <= n and text:byte(i) ~= 10 do
         bump()
+      end
+      if keep_comments then
+        add("comment", text:sub(start_offset + 1, i - 1), start_offset, start_line, start_col)
+        tokens[#tokens].kind = "line"
       end
 
     elseif char == "/" and text:sub(i, i + 1) == "/*" then
@@ -107,6 +127,10 @@ function M.tokenize(text)
       end
       if not closed then
         record_error("unterminated block comment", start_offset, start_line, start_col)
+      end
+      if keep_comments then
+        add("comment", text:sub(start_offset + 1, i - 1), start_offset, start_line, start_col)
+        tokens[#tokens].kind = "block"
       end
 
     elseif char == "`" then

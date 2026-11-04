@@ -8,6 +8,12 @@ local symbols = require("dbml.symbols")
 
 local M = {}
 
+---@param entries dbml.Occurrence[]
+---@param seen table<string, dbml.Occurrence>
+---@param range dbml.Range?
+---@param declaration boolean
+---@param kind "name"|"type"|"string"?
+---@param prefix string?
 local function add(entries, seen, range, declaration, kind, prefix)
   if not range then
     return
@@ -30,6 +36,9 @@ local function add(entries, seen, range, declaration, kind, prefix)
   entries[#entries + 1] = entry
 end
 
+---@param endpoint dbml.Endpoint
+---@param table dbml.Table
+---@return boolean
 local function schema_matches(endpoint, table)
   if endpoint.schema and table.schema then
     return endpoint.schema == table.schema
@@ -41,11 +50,17 @@ local function schema_matches(endpoint, table)
 end
 
 --- Whether a ref endpoint spells the table's actual name (not its alias).
+---@param endpoint dbml.Endpoint
+---@param table dbml.Table
+---@return boolean
 local function endpoint_uses_table_name(endpoint, table)
   return endpoint.table == table.name and schema_matches(endpoint, table)
 end
 
 --- Whether a ref endpoint refers to the table through its name or alias.
+---@param endpoint dbml.Endpoint
+---@param table dbml.Table
+---@return boolean
 local function endpoint_uses_table(endpoint, table)
   if endpoint.table == table.name and schema_matches(endpoint, table) then
     return true

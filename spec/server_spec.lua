@@ -69,6 +69,7 @@ describe("server", function()
     assert.is_true(response.result.capabilities.definitionProvider)
     assert.is_true(response.result.capabilities.renameProvider.prepareProvider)
     assert.is_true(response.result.capabilities.referencesProvider)
+    assert.is_true(response.result.capabilities.documentFormattingProvider)
     assert.is_true(response.result.capabilities.documentSymbolProvider)
     assert.equal("dbml-ls", response.result.serverInfo.name)
     assert.is_true(server.initialized)
@@ -416,6 +417,43 @@ describe("server", function()
       },
     })
     assert.equal("[]", json.encode(last(sent).result))
+  end)
+
+  it("returns a full-document formatting edit", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users{id int[pk,unique]}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 15,
+      method = "textDocument/formatting",
+      params = {
+        textDocument = { uri = URI },
+        options = { tabSize = 2, insertSpaces = true },
+      },
+    })
+
+    local edits = last(sent).result
+    assert.equal(1, #edits)
+    assert.equal("Table users {\n  id int [pk, unique]\n}\n", edits[1].newText)
+    assert.equal(0, edits[1].range.start.line)
+    assert.equal(0, edits[1].range.start.character)
+  end)
+
+  it("does not format invalid documents", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(server, "Table users {\n  id\n}\n")
+
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 16,
+      method = "textDocument/formatting",
+      params = { textDocument = { uri = URI } },
+    })
+
+    assert.equal(json.null, last(sent).result)
   end)
 
   it("returns document symbols", function()

@@ -37,6 +37,11 @@ function M.hover_at(text_with_cursor)
   return M.hover(text, line, character)
 end
 
+function M.format(text, options)
+  local analyzed, document = M.analyze(text)
+  return require("dbml.formatter").format(analyzed, document, options)
+end
+
 function M.references_at(text_with_cursor, include_declaration)
   local text, line, character = M.cursor(text_with_cursor)
   local analyzed, document = M.analyze(text)

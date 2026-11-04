@@ -9,6 +9,7 @@ local hover = require("dbml.hover")
 local definition = require("dbml.definition")
 local rename_engine = require("dbml.rename")
 local references_engine = require("dbml.references")
+local formatter = require("dbml.formatter")
 local symbols = require("dbml.symbols")
 local diagnostics_engine = require("dbml.diagnostics")
 
@@ -82,6 +83,7 @@ function Server.new(options)
     ["textDocument/prepareRename"] = Server.handle_prepare_rename,
     ["textDocument/rename"] = Server.handle_rename,
     ["textDocument/references"] = Server.handle_references,
+    ["textDocument/formatting"] = Server.handle_formatting,
     ["textDocument/documentSymbol"] = Server.handle_document_symbol,
 
     ["workspace/didChangeConfiguration"] = Server.handle_noop,
@@ -202,6 +204,7 @@ function Server:handle_initialize(params, message)
         prepareProvider = true,
       },
       referencesProvider = true,
+      documentFormattingProvider = true,
       documentSymbolProvider = true,
     },
     serverInfo = {
@@ -409,6 +412,34 @@ function Server:handle_references(params, message)
     context.includeDeclaration == true
   )
   self:respond(message.id, result)
+end
+
+---@param params table
+---@param message table
+function Server:handle_formatting(params, message)
+  ---@cast self dbml.Server
+  local document = self:document_for(params)
+  if not document then
+    self:respond(message.id, json.null)
+    return
+  end
+
+  local analyzed = analysis.get(document)
+  local formatted = formatter.format(analyzed, document, params.options)
+  if not formatted or formatted == document.text then
+    self:respond(message.id, json.null)
+    return
+  end
+
+  self:respond(message.id, {
+    {
+      range = {
+        start = { line = 0, character = 0 },
+        ["end"] = document:position_at(#document.text),
+      },
+      newText = formatted,
+    },
+  })
 end
 
 ---@param params table

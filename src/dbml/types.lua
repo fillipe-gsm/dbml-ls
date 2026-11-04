@@ -22,6 +22,9 @@
 ---@field line integer
 ---@field col integer
 
+---@class dbml.TokenizeOptions
+---@field comments? boolean
+
 ---@class dbml.Token
 ---@field type string
 ---@field value string
@@ -280,6 +283,10 @@
 ---@field snippet? string
 ---@field sort_text? string
 ---@field filter_text? string
+
+---@class dbml.FormattingOptions
+---@field tabSize? integer
+---@field insertSpaces? boolean
 
 ---@class dbml.CompletionOptions
 ---@field snippets? boolean

@@ -37,6 +37,13 @@ describe("lexer", function()
     assert.same({ "Table", "users", "{", "}" }, values(tokens))
   end)
 
+  it("can retain comments for the formatter", function()
+    local tokens = lexer.tokenize("// comment\nTable /* inline */ users {}", { comments = true })
+    assert.same({ "// comment", "Table", "/* inline */", "users", "{", "}" }, values(tokens))
+    assert.equal("line", tokens[1].kind)
+    assert.equal("block", tokens[3].kind)
+  end)
+
   it("decodes single-quoted escapes", function()
     local tokens = lexer.tokenize([[Note: 'hello\nworld']])
     local string = tokens[3]

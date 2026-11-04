@@ -5,6 +5,9 @@ local symbols = require("dbml.symbols")
 
 local M = {}
 
+---@param range dbml.Range?
+---@param offset integer
+---@return boolean
 local function contains(range, offset)
   return range ~= nil and range.start <= offset and offset <= range.stop
 end

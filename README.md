@@ -64,6 +64,8 @@ Implemented:
   usages, and enum defaults.
 - **Find references** for the same symbols, with optional declaration
   inclusion.
+- **Formatting** for the whole document, preserving comments, strings,
+  backtick expressions, and index expressions.
 - **Diagnostics** for syntax errors, duplicate definitions, unknown index
   columns, unresolved refs, unknown table group members, and unknown
   table partial includes.
@@ -81,7 +83,7 @@ modern DBML does not produce false syntax errors.
 
 Not implemented yet:
 
-- Formatting
+- Range formatting (full-document formatting is supported)
 - Workspace/multi-file indexing (single-buffer only for now)
 - Syntax highlighting (belongs in a Neovim syntax or tree-sitter
   plugin, not in the language server)
@@ -204,6 +206,34 @@ so on) return an empty list. Cross-file references remain out of scope.
 In Neovim, `grr` is mapped to `vim.lsp.buf.references()` when the server
 attaches.
 
+### Formatting
+
+`textDocument/formatting` formats the whole document. The formatter is
+token-preserving: it only changes whitespace and never drops or rewrites
+comments, strings, backtick expressions, quoting, casing, ordering, or
+index expressions.
+
+Style:
+
+- two-space indentation (or the client's `tabSize` / `insertSpaces`)
+- one blank line between top-level blocks; consecutive `Ref` lines stay
+  grouped
+- one entry per line for columns, enum values, index entries, group
+  members, and project settings
+- one space around ref operators, with optional markers kept intact
+  (`>?`, `?>`, `?<`, `<?`, `<>`)
+- settings use `[pk, not null]` style; `key: value`; commas followed by a
+  space
+- exactly one trailing newline
+
+Formatting is refused when the document has syntax errors, so the
+server never turns a broken file into a differently-broken file.
+
+In Neovim, `<leader>f` already routes through conform and falls back to
+the LSP formatter. Format-on-save currently enables only Lua, Python,
+Rust, and Bash; add `dbml = true` to `enabled_filetypes` in
+`lua/plugins/_conform.lua` if you want DBML formatted on save.
+
 ### Requirements
 
 - Lua 5.4
@@ -244,9 +274,9 @@ sets up the `src/` module path.
 
 The suite covers the JSON wrapper, lexer, parser, the `Endpoint` /
 `Reference` model, document/position mapping, completion, hover,
-go-to-definition, rename, find-references, document symbols, diagnostics,
-RPC framing, server lifecycle, and a full stdio integration test of
-`src/main.lua`.
+go-to-definition, rename, find-references, formatting, document symbols,
+diagnostics, RPC framing, server lifecycle, and a full stdio integration
+test of `src/main.lua`.
 
 Source modules carry LuaCATS annotations for their public methods,
 internal helpers, AST nodes, and LSP payloads. `src/dbml/types.lua` holds
