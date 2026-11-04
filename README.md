@@ -62,6 +62,8 @@ Implemented:
   partials, table groups, and projects, including refs, inline refs,
   composite refs, indexes, group members, partial includes, enum type
   usages, and enum defaults.
+- **Find references** for the same symbols, with optional declaration
+  inclusion.
 - **Diagnostics** for syntax errors, duplicate definitions, unknown index
   columns, unresolved refs, unknown table group members, and unknown
   table partial includes.
@@ -79,7 +81,6 @@ modern DBML does not produce false syntax errors.
 
 Not implemented yet:
 
-- Find-references
 - Formatting
 - Workspace/multi-file indexing (single-buffer only for now)
 - Syntax highlighting (belongs in a Neovim syntax or tree-sitter
@@ -184,6 +185,25 @@ out of scope.
 In Neovim, the existing `grn` mapping (`vim.lsp.buf.rename`) already uses
 this; no config change is needed.
 
+### Find references
+
+`textDocument/references` returns every occurrence the server knows
+about in the current buffer, respecting the client's
+`includeDeclaration` flag. Rename and find-references share the same
+occurrence traversal, so they cannot disagree about what counts as a
+reference.
+
+References cover the same targets as rename: tables, aliases, columns,
+enums, enum values, table partials, table groups, and projects. That
+includes top-level refs, inline refs, composite refs, indexes, group
+members, partial includes, enum type usages, and enum-value defaults.
+
+Positions that are not actual symbol names (settings, ref operators, and
+so on) return an empty list. Cross-file references remain out of scope.
+
+In Neovim, `grr` is mapped to `vim.lsp.buf.references()` when the server
+attaches.
+
 ### Requirements
 
 - Lua 5.4
@@ -224,8 +244,9 @@ sets up the `src/` module path.
 
 The suite covers the JSON wrapper, lexer, parser, the `Endpoint` /
 `Reference` model, document/position mapping, completion, hover,
-go-to-definition, rename, document symbols, diagnostics, RPC framing,
-server lifecycle, and a full stdio integration test of `src/main.lua`.
+go-to-definition, rename, find-references, document symbols, diagnostics,
+RPC framing, server lifecycle, and a full stdio integration test of
+`src/main.lua`.
 
 Source modules carry LuaCATS annotations for their public methods,
 internal helpers, AST nodes, and LSP payloads. `src/dbml/types.lua` holds

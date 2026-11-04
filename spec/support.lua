@@ -37,6 +37,15 @@ function M.hover_at(text_with_cursor)
   return M.hover(text, line, character)
 end
 
+function M.references_at(text_with_cursor, include_declaration)
+  local text, line, character = M.cursor(text_with_cursor)
+  local analyzed, document = M.analyze(text)
+  return require("dbml.references").references(analyzed, document, {
+    line = line,
+    character = character,
+  }, include_declaration == true), document, text
+end
+
 function M.prepare_rename_at(text_with_cursor)
   local text, line, character = M.cursor(text_with_cursor)
   local analyzed, document = M.analyze(text)

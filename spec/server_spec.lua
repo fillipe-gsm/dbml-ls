@@ -68,6 +68,7 @@ describe("server", function()
     assert.is_true(response.result.capabilities.hoverProvider)
     assert.is_true(response.result.capabilities.definitionProvider)
     assert.is_true(response.result.capabilities.renameProvider.prepareProvider)
+    assert.is_true(response.result.capabilities.referencesProvider)
     assert.is_true(response.result.capabilities.documentSymbolProvider)
     assert.equal("dbml-ls", response.result.serverInfo.name)
     assert.is_true(server.initialized)
@@ -367,6 +368,54 @@ describe("server", function()
     })
 
     assert.equal(json.null, last(sent).result)
+  end)
+
+  it("returns references with and without the declaration", function()
+    local server, sent = new_server()
+    initialize(server)
+    open(
+      server,
+      "Table users {\n  id integer\n}\n"
+        .. "Table orders {\n  user_id integer [ref: > users.id]\n}\n"
+        .. "Ref: users.id < orders.id\n"
+    )
+
+    local function request(include_declaration)
+      server:dispatch({
+        jsonrpc = "2.0",
+        id = 13,
+        method = "textDocument/references",
+        params = {
+          textDocument = { uri = URI },
+          position = { line = 1, character = 3 },
+          context = { includeDeclaration = include_declaration },
+        },
+      })
+      return last(sent).result
+    end
+
+    local with_declaration = request(true)
+    assert.equal(3, #with_declaration)
+    assert.equal(URI, with_declaration[1].uri)
+
+    local without_declaration = request(false)
+    assert.equal(2, #without_declaration)
+  end)
+
+  it("returns an empty reference list without a document", function()
+    local server, sent = new_server()
+    initialize(server)
+    server:dispatch({
+      jsonrpc = "2.0",
+      id = 14,
+      method = "textDocument/references",
+      params = {
+        textDocument = { uri = "file:///missing.dbml" },
+        position = { line = 0, character = 0 },
+        context = { includeDeclaration = true },
+      },
+    })
+    assert.equal("[]", json.encode(last(sent).result))
   end)
 
   it("returns document symbols", function()

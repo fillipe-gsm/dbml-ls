@@ -330,6 +330,12 @@
 ---@field group? dbml.TableGroup
 ---@field project? dbml.Project
 
+---@class dbml.Occurrence
+---@field range dbml.Range
+---@field declaration boolean
+---@field kind "name"|"type"|"string"
+---@field prefix? string
+
 ---@class dbml.RenameEdit
 ---@field start integer
 ---@field stop integer
